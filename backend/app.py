@@ -9,6 +9,7 @@ import os
 import sys
 from pathlib import Path
 import traceback
+import tempfile
 
 # Add services to path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -20,11 +21,7 @@ app = Flask(__name__)
 CORS(app)  # Enable CORS for frontend communication
 
 # Configuration
-UPLOAD_FOLDER = Path(__file__).parent / 'uploads'
-UPLOAD_FOLDER.mkdir(exist_ok=True)
 ALLOWED_EXTENSIONS = {'csv'}
-
-app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500MB max file size
 
 def allowed_file(filename):
@@ -46,10 +43,12 @@ def health_check():
 def upload_csv():
     """
     Upload CSV file and create a workflow for analysis
+    Uses system temporary directory - no local folder created
     
     Returns:
         JSON with workflow info and upload results
     """
+    temp_file = None
     try:
         # Check if file is present
         if 'file' not in request.files:
@@ -68,12 +67,16 @@ def upload_csv():
         # Get optional workflow name
         workflow_name = request.form.get('workflow_name', 'Unnamed Analysis')
         
-        # Save file securely
+        # Create temporary file in system temp directory
         filename = secure_filename(file.filename)
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        file.save(filepath)
+        temp_file = tempfile.NamedTemporaryFile(mode='wb', suffix='.csv', delete=False)
+        filepath = temp_file.name
         
-        print(f"📁 File saved: {filepath}")
+        # Save uploaded file to temp location
+        file.save(filepath)
+        temp_file.close()
+        
+        print(f"📁 File saved to system temp: {filepath}")
         
         # Initialize workflow manager
         print("🔌 Connecting to Snowflake...")
@@ -98,12 +101,9 @@ def upload_csv():
         preview_data = uploader.query(f"SELECT * FROM {table_name} LIMIT 5")
         column_names = [desc[0] for desc in uploader.cursor.description]
         
-        # Clean up
+        # Clean up connections
         uploader.close()
         manager.close()
-        
-        # Optional: Remove uploaded file to save space
-        # os.remove(filepath)
         
         # Prepare response
         response = {
@@ -138,6 +138,15 @@ def upload_csv():
             'error': str(e),
             'type': type(e).__name__
         }), 500
+    
+    finally:
+        # Always clean up the temporary file
+        if temp_file and os.path.exists(temp_file.name):
+            try:
+                os.remove(temp_file.name)
+                print(f"🗑️ Temporary file deleted from system temp")
+            except Exception as e:
+                print(f"⚠️ Could not delete temporary file: {e}")
 
 
 @app.route('/api/workflows', methods=['GET'])
