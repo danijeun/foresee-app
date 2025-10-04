@@ -10,4 +10,8 @@ class Config:
     SNOWFLAKE_PASSWORD = os.getenv("SNOWFLAKE_PASSWORD")
 
     # Warehouses
-    INTEGRATION_WAREHOUSE = os.getenv("INTEGRATION_WAREHOUSE")
+    INGESTION_WAREHOUSE = os.getenv("INGESTION_WAREHOUSE")
+    
+    # Database and Schema
+    SNOWFLAKE_DATABASE = os.getenv("SNOWFLAKE_DATABASE")
+    SNOWFLAKE_SCHEMA = os.getenv("SNOWFLAKE_SCHEMA")
