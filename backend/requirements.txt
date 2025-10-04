@@ -1,0 +1,8 @@
+flask==2.3.0
+snowflake-connector-python==3.5.0
+snowflake-snowpark-python==1.11.0
+pandas==2.0.0
+numpy==1.24.0
+scikit-learn==1.3.0
+xgboost==2.0.0
+python-dotenv==1.0.0
