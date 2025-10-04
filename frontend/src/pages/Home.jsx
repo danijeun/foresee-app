@@ -88,6 +88,10 @@ function Home() {
     }
   };
 
+import React from "react";
+import homeimage1 from "../assets/homeimage1.png";
+
+function Home() {
   return (
     <div className="font-poppin pt-32">
       
@@ -100,6 +104,8 @@ function Home() {
             </h2>
             <p className="text-gray-700 leading-relaxed">
               Upload your CSV file and let our AI-powered platform analyze your data, train multiple ML models, and generate comprehensive insights instantly.
+              Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do
+              eiusmod tempor incididunt ut labore et dolore magna aliqua.
             </p>
           </div>
 
