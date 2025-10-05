@@ -1,3 +1,12 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@keyframes zoomInOut {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.08); }
+}
+
+.animate-zoom {
+  animation: zoomInOut 2.5s ease-in-out infinite;
+}
