@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from services.workflow_manager import WorkflowManager
 from services.snowflake_ingestion import SnowflakeCSVUploader
+from agents.target_variable_agent import TargetVariableAgent
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for frontend communication
@@ -241,6 +242,60 @@ def execute_query():
     except Exception as e:
         print(f"❌ Error: {str(e)}")
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/analyze-target-variable', methods=['POST'])
+def analyze_target_variable():
+    """
+    Analyze a workflow's dataset and extract the most important target variables
+    ranked by importance (1-100 score) using Gemini AI
+    
+    Body:
+        {
+            "workflow_id": "uuid",
+            "table_name": "optional_table_name",
+            "sample_size": 100  // optional, default 100
+        }
+        
+    Returns:
+        JSON with top 5 target variables ranked by importance, including:
+        - Importance scores (1-100)
+        - Predictability assessment (HIGH/MEDIUM/LOW)
+        - Problem type (regression/classification)
+        - Suggested features
+        - Ranking rationale
+    """
+    try:
+        data = request.get_json()
+        workflow_id = data.get('workflow_id')
+        table_name = data.get('table_name')
+        sample_size = data.get('sample_size', 100)
+        
+        if not workflow_id:
+            return jsonify({'error': 'workflow_id is required'}), 400
+        
+        print(f"🤖 Starting target variable analysis for workflow: {workflow_id}")
+        
+        # Initialize the agent
+        agent = TargetVariableAgent()
+        
+        # Analyze the workflow
+        result = agent.analyze_workflow(
+            workflow_id=workflow_id,
+            table_name=table_name,
+            sample_size=sample_size
+        )
+        
+        print(f"✅ Analysis completed successfully")
+        return jsonify(result), 200
+        
+    except Exception as e:
+        print(f"❌ Error: {str(e)}")
+        traceback.print_exc()
+        return jsonify({
+            'error': str(e),
+            'type': type(e).__name__
+        }), 500
 
 
 if __name__ == '__main__':
