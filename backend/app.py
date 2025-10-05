@@ -12,6 +12,7 @@ import traceback
 import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
+from datetime import datetime
 
 # Add services to path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -20,6 +21,10 @@ from services.workflow_manager import WorkflowManager
 from services.snowflake_ingestion import SnowflakeCSVUploader
 from services.eda_service import WorkflowEDAService
 from agents.target_variable_agent import TargetVariableAgent
+from agents.logistic_regression_agent import LogisticRegressionAgent
+from agents.decision_tree_agent import DecisionTreeAgent
+from agents.xgboost_agent import XGBoostAgent
+from agents.natural_language_agent import NaturalLanguageAgent
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for frontend communication
@@ -502,6 +507,7 @@ def analyze_target_variable():
 def select_target_variable(workflow_id):
     """
     Save the user's selected target variable to the workflow_eda_summary table
+    and automatically trigger ML model training (Logistic Regression + Decision Tree + XGBoost)
     
     Args:
         workflow_id: Workflow UUID
@@ -515,7 +521,7 @@ def select_target_variable(workflow_id):
         }
         
     Returns:
-        JSON with success confirmation
+        JSON with success confirmation and all three ML models training results
     """
     try:
         data = request.get_json()
@@ -579,18 +585,1127 @@ def select_target_variable(workflow_id):
         uploader.close()
         manager.close()
         
-        return jsonify({
+        # Automatically start ML model training after target selection
+        print("\n" + "=" * 70)
+        print("🤖 AUTO-STARTING ML MODEL TRAINING")
+        print("=" * 70)
+        
+        lr_result = None
+        lr_error = None
+        dt_result = None
+        dt_error = None
+        
+        # Train Logistic Regression
+        try:
+            print("\n" + "=" * 70)
+            print("🤖 LOGISTIC REGRESSION TRAINING")
+            print("=" * 70)
+            
+            lr_agent = LogisticRegressionAgent()
+            lr_result = lr_agent.train_and_evaluate(
+                workflow_id=workflow_id,
+                table_name=table_name,
+                test_size=0.2,
+                random_state=42,
+                max_iter=1000
+            )
+            
+            print("=" * 70)
+            print("✅ Logistic Regression Training Completed!")
+            print("=" * 70)
+            
+        except Exception as lr_e:
+            lr_error = str(lr_e)
+            print(f"❌ Logistic Regression Training Failed: {lr_error}")
+            traceback.print_exc()
+        
+        # Train Decision Tree
+        try:
+            print("\n" + "=" * 70)
+            print("🌳 DECISION TREE TRAINING")
+            print("=" * 70)
+            
+            dt_agent = DecisionTreeAgent()
+            dt_result = dt_agent.train_and_evaluate(
+                workflow_id=workflow_id,
+                table_name=table_name,
+                test_size=0.2,
+                random_state=42,
+                max_depth=10  # Limit depth to prevent overfitting
+            )
+            
+            print("=" * 70)
+            print("✅ Decision Tree Training Completed!")
+            print("=" * 70)
+            
+        except Exception as dt_e:
+            dt_error = str(dt_e)
+            print(f"❌ Decision Tree Training Failed: {dt_error}")
+            traceback.print_exc()
+        
+        # Train XGBoost
+        xgb_result = None
+        xgb_error = None
+        
+        try:
+            print("\n" + "=" * 70)
+            print("🚀 XGBOOST TRAINING")
+            print("=" * 70)
+            
+            xgb_agent = XGBoostAgent()
+            xgb_result = xgb_agent.train_and_evaluate(
+                workflow_id=workflow_id,
+                table_name=table_name,
+                test_size=0.2,
+                random_state=42,
+                n_estimators=100,
+                max_depth=6
+            )
+            
+            print("=" * 70)
+            print("✅ XGBoost Training Completed!")
+            print("=" * 70)
+            
+        except Exception as xgb_e:
+            xgb_error = str(xgb_e)
+            print(f"❌ XGBoost Training Failed: {xgb_error}")
+            traceback.print_exc()
+        
+        # Prepare response with both target selection and ML results
+        response = {
             'success': True,
-            'message': 'Target variable saved successfully',
+            'message': 'Target variable saved and ML models training completed',
             'workflow_id': workflow_id,
             'target_variable': target_variable,
             'table_name': table_name,
             'problem_type': problem_type,
             'importance_score': importance_score
-        }), 200
+        }
+        
+        # Add Logistic Regression results if available
+        if lr_result and lr_result.get('success'):
+            response['logistic_regression'] = {
+                'success': True,
+                'model_type': 'Logistic Regression',
+                'insights': {
+                    'test_accuracy': lr_result['insights']['test_accuracy'],
+                    'test_precision': lr_result['insights']['test_precision'],
+                    'test_recall': lr_result['insights']['test_recall'],
+                    'test_f1': lr_result['insights']['test_f1'],
+                    'test_roc_auc': lr_result['insights']['test_roc_auc'],
+                    'total_samples': lr_result['insights']['total_samples'],
+                    'total_features': lr_result['insights']['total_features'],
+                    'n_classes': lr_result['insights']['n_classes'],
+                    'performance_summary': lr_result['insights']['performance_summary'],
+                    'top_features': lr_result['insights']['top_features'][:5],
+                    'recommendations': lr_result['insights']['recommendations']
+                },
+                'results_location': f"WORKFLOW_{workflow_id}.LOGISTIC_REGRESSION_SUMMARY"
+            }
+        elif lr_error:
+            response['logistic_regression'] = {
+                'success': False,
+                'error': lr_error,
+                'message': 'Logistic Regression training failed'
+            }
+        
+        # Add Decision Tree results if available
+        if dt_result and dt_result.get('success'):
+            response['decision_tree'] = {
+                'success': True,
+                'model_type': 'Decision Tree',
+                'insights': {
+                    'test_accuracy': dt_result['insights']['test_accuracy'],
+                    'test_precision': dt_result['insights']['test_precision'],
+                    'test_recall': dt_result['insights']['test_recall'],
+                    'test_f1': dt_result['insights']['test_f1'],
+                    'test_roc_auc': dt_result['insights']['test_roc_auc'],
+                    'tree_depth': dt_result['insights']['tree_depth'],
+                    'n_leaves': dt_result['insights']['n_leaves'],
+                    'total_samples': dt_result['insights']['total_samples'],
+                    'total_features': dt_result['insights']['total_features'],
+                    'n_classes': dt_result['insights']['n_classes'],
+                    'performance_summary': dt_result['insights']['performance_summary'],
+                    'top_features': dt_result['insights']['top_features'][:5],
+                    'recommendations': dt_result['insights']['recommendations']
+                },
+                'results_location': f"WORKFLOW_{workflow_id}.DECISION_TREE_SUMMARY"
+            }
+        elif dt_error:
+            response['decision_tree'] = {
+                'success': False,
+                'error': dt_error,
+                'message': 'Decision Tree training failed'
+            }
+        
+        # Add XGBoost results if available
+        if xgb_result and xgb_result.get('success'):
+            response['xgboost'] = {
+                'success': True,
+                'model_type': 'XGBoost',
+                'insights': {
+                    'test_accuracy': xgb_result['insights']['test_accuracy'],
+                    'test_precision': xgb_result['insights']['test_precision'],
+                    'test_recall': xgb_result['insights']['test_recall'],
+                    'test_f1': xgb_result['insights']['test_f1'],
+                    'test_roc_auc': xgb_result['insights']['test_roc_auc'],
+                    'n_estimators': xgb_result['insights']['n_estimators'],
+                    'max_depth': xgb_result['insights']['max_depth'],
+                    'total_samples': xgb_result['insights']['total_samples'],
+                    'total_features': xgb_result['insights']['total_features'],
+                    'n_classes': xgb_result['insights']['n_classes'],
+                    'performance_summary': xgb_result['insights']['performance_summary'],
+                    'top_features': xgb_result['insights']['top_features'][:5],
+                    'recommendations': xgb_result['insights']['recommendations']
+                },
+                'results_location': f"WORKFLOW_{workflow_id}.XGBOOST_SUMMARY"
+            }
+        elif xgb_error:
+            response['xgboost'] = {
+                'success': False,
+                'error': xgb_error,
+                'message': 'XGBoost training failed'
+            }
+        
+        # Automatically generate Natural Language Insights after ML models complete
+        nl_result = None
+        nl_error = None
+        
+        try:
+            print("\n" + "=" * 70)
+            print("📝 GENERATING NATURAL LANGUAGE INSIGHTS")
+            print("=" * 70)
+            
+            # Generate output path for JSON file
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            backend_dir = Path(__file__).parent
+            insights_dir = backend_dir / "insights"
+            output_path = insights_dir / f"insights_{workflow_id}_{timestamp}.json"
+            output_path = str(output_path)
+            
+            nl_agent = NaturalLanguageAgent()
+            nl_result = nl_agent.generate_insights(
+                workflow_id=workflow_id,
+                table_name=table_name,
+                output_path=output_path
+            )
+            
+            print("=" * 70)
+            print("✅ Natural Language Insights Generated!")
+            print("=" * 70)
+            
+        except Exception as nl_e:
+            nl_error = str(nl_e)
+            print(f"❌ Natural Language Insights Generation Failed: {nl_error}")
+            traceback.print_exc()
+        
+        # Add Natural Language Insights to response
+        if nl_result and nl_result.get('success'):
+            response['natural_language_insights'] = {
+                'success': True,
+                'file_path': nl_result.get('output_path'),
+                'insights': nl_result.get('insights'),
+                'message': 'Natural language insights generated successfully'
+            }
+        elif nl_error:
+            response['natural_language_insights'] = {
+                'success': False,
+                'error': nl_error,
+                'message': 'Natural language insights generation failed'
+            }
+        
+        return jsonify(response), 200
         
     except Exception as e:
         print(f"❌ Error saving target variable: {str(e)}")
+        traceback.print_exc()
+        return jsonify({
+            'error': str(e),
+            'type': type(e).__name__
+        }), 500
+
+
+@app.route('/api/workflow/<workflow_id>/train-logistic-regression', methods=['POST'])
+def train_logistic_regression(workflow_id):
+    """
+    Train a logistic regression model on the selected target variable
+    
+    Args:
+        workflow_id: Workflow UUID
+        
+    Body:
+        {
+            "table_name": "table_name",
+            "test_size": 0.2,  // optional, default 0.2
+            "random_state": 42,  // optional, default 42
+            "max_iter": 1000  // optional, default 1000
+        }
+        
+    Returns:
+        JSON with model insights and performance metrics
+    """
+    try:
+        data = request.get_json()
+        table_name = data.get('table_name')
+        test_size = data.get('test_size', 0.2)
+        random_state = data.get('random_state', 42)
+        max_iter = data.get('max_iter', 1000)
+        
+        if not table_name:
+            return jsonify({'error': 'table_name is required'}), 400
+        
+        print("\n" + "=" * 70)
+        print(f"🤖 Starting Logistic Regression Training")
+        print(f"   Workflow: {workflow_id}")
+        print(f"   Table: {table_name}")
+        print("=" * 70)
+        
+        # Initialize Logistic Regression Agent
+        agent = LogisticRegressionAgent()
+        
+        # Train and evaluate model
+        result = agent.train_and_evaluate(
+            workflow_id=workflow_id,
+            table_name=table_name,
+            test_size=test_size,
+            random_state=random_state,
+            max_iter=max_iter
+        )
+        
+        print("=" * 70)
+        print("✅ Logistic Regression Training Completed")
+        print("=" * 70)
+        
+        return jsonify({
+            'success': True,
+            'workflow_id': workflow_id,
+            'table_name': table_name,
+            'model_type': 'Logistic Regression',
+            'insights': {
+                'target_variable': result['insights']['target_variable'],
+                'test_accuracy': result['insights']['test_accuracy'],
+                'test_precision': result['insights']['test_precision'],
+                'test_recall': result['insights']['test_recall'],
+                'test_f1': result['insights']['test_f1'],
+                'test_roc_auc': result['insights']['test_roc_auc'],
+                'total_samples': result['insights']['total_samples'],
+                'total_features': result['insights']['total_features'],
+                'n_classes': result['insights']['n_classes'],
+                'performance_summary': result['insights']['performance_summary'],
+                'top_features': result['insights']['top_features'][:5],
+                'top_features_summary': result['insights']['top_features_summary'],
+                'data_quality_summary': result['insights']['data_quality_summary'],
+                'recommendations': result['insights']['recommendations']
+            },
+            'results_location': f"WORKFLOW_{workflow_id}.LOGISTIC_REGRESSION_SUMMARY"
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ Error training logistic regression: {str(e)}")
+        traceback.print_exc()
+        return jsonify({
+            'error': str(e),
+            'type': type(e).__name__
+        }), 500
+
+
+@app.route('/api/workflow/<workflow_id>/train-decision-tree', methods=['POST'])
+def train_decision_tree(workflow_id):
+    """
+    Train a decision tree model on the selected target variable
+    
+    Args:
+        workflow_id: Workflow UUID
+        
+    Body:
+        {
+            "table_name": "table_name",
+            "test_size": 0.2,  // optional, default 0.2
+            "random_state": 42,  // optional, default 42
+            "max_depth": 10,  // optional, default None (unlimited)
+            "min_samples_split": 2,  // optional, default 2
+            "min_samples_leaf": 1  // optional, default 1
+        }
+        
+    Returns:
+        JSON with model insights and performance metrics
+    """
+    try:
+        data = request.get_json()
+        table_name = data.get('table_name')
+        test_size = data.get('test_size', 0.2)
+        random_state = data.get('random_state', 42)
+        max_depth = data.get('max_depth')  # None = unlimited
+        min_samples_split = data.get('min_samples_split', 2)
+        min_samples_leaf = data.get('min_samples_leaf', 1)
+        
+        if not table_name:
+            return jsonify({'error': 'table_name is required'}), 400
+        
+        print("\n" + "=" * 70)
+        print(f"🌳 Starting Decision Tree Training")
+        print(f"   Workflow: {workflow_id}")
+        print(f"   Table: {table_name}")
+        print("=" * 70)
+        
+        # Initialize Decision Tree Agent
+        agent = DecisionTreeAgent()
+        
+        # Train and evaluate model
+        result = agent.train_and_evaluate(
+            workflow_id=workflow_id,
+            table_name=table_name,
+            test_size=test_size,
+            random_state=random_state,
+            max_depth=max_depth,
+            min_samples_split=min_samples_split,
+            min_samples_leaf=min_samples_leaf
+        )
+        
+        print("=" * 70)
+        print("✅ Decision Tree Training Completed")
+        print("=" * 70)
+        
+        return jsonify({
+            'success': True,
+            'workflow_id': workflow_id,
+            'table_name': table_name,
+            'model_type': 'Decision Tree',
+            'insights': {
+                'target_variable': result['insights']['target_variable'],
+                'test_accuracy': result['insights']['test_accuracy'],
+                'test_precision': result['insights']['test_precision'],
+                'test_recall': result['insights']['test_recall'],
+                'test_f1': result['insights']['test_f1'],
+                'test_roc_auc': result['insights']['test_roc_auc'],
+                'tree_depth': result['insights']['tree_depth'],
+                'n_leaves': result['insights']['n_leaves'],
+                'total_samples': result['insights']['total_samples'],
+                'total_features': result['insights']['total_features'],
+                'n_classes': result['insights']['n_classes'],
+                'performance_summary': result['insights']['performance_summary'],
+                'top_features': result['insights']['top_features'][:5],
+                'top_features_summary': result['insights']['top_features_summary'],
+                'data_quality_summary': result['insights']['data_quality_summary'],
+                'model_config_summary': result['insights']['model_config_summary'],
+                'recommendations': result['insights']['recommendations']
+            },
+            'results_location': f"WORKFLOW_{workflow_id}.DECISION_TREE_SUMMARY"
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ Error training decision tree: {str(e)}")
+        traceback.print_exc()
+        return jsonify({
+            'error': str(e),
+            'type': type(e).__name__
+        }), 500
+
+
+@app.route('/api/workflow/<workflow_id>/decision-tree-results', methods=['GET'])
+def get_decision_tree_results(workflow_id):
+    """
+    Get decision tree results from the DECISION_TREE_SUMMARY table
+    
+    Args:
+        workflow_id: Workflow UUID
+        
+    Query Parameters:
+        table_name: Optional table name to filter results
+        
+    Returns:
+        JSON with decision tree analysis results
+    """
+    try:
+        table_name = request.args.get('table_name')
+        schema_name = f"WORKFLOW_{workflow_id}"
+        
+        print(f"\n🔍 Retrieving decision tree results for workflow {workflow_id}")
+        
+        # Initialize workflow manager
+        manager = WorkflowManager()
+        uploader = manager.get_workflow_uploader(schema_name=schema_name)
+        
+        # Build query
+        if table_name:
+            query = f"""
+                SELECT 
+                    analysis_id,
+                    table_name,
+                    target_variable,
+                    model_type,
+                    problem_type,
+                    test_accuracy,
+                    test_precision,
+                    test_recall,
+                    test_f1_score,
+                    test_roc_auc,
+                    train_accuracy,
+                    tree_depth,
+                    n_leaves,
+                    max_depth,
+                    min_samples_split,
+                    min_samples_leaf,
+                    total_samples,
+                    total_features,
+                    n_classes,
+                    performance_summary,
+                    top_features_summary,
+                    data_quality_summary,
+                    model_config_summary,
+                    confusion_matrix,
+                    top_features,
+                    recommendations,
+                    created_at
+                FROM {schema_name}.DECISION_TREE_SUMMARY
+                WHERE table_name = '{table_name}'
+                ORDER BY created_at DESC
+            """
+        else:
+            query = f"""
+                SELECT 
+                    analysis_id,
+                    table_name,
+                    target_variable,
+                    model_type,
+                    problem_type,
+                    test_accuracy,
+                    test_precision,
+                    test_recall,
+                    test_f1_score,
+                    test_roc_auc,
+                    train_accuracy,
+                    tree_depth,
+                    n_leaves,
+                    max_depth,
+                    min_samples_split,
+                    min_samples_leaf,
+                    total_samples,
+                    total_features,
+                    n_classes,
+                    performance_summary,
+                    top_features_summary,
+                    data_quality_summary,
+                    model_config_summary,
+                    confusion_matrix,
+                    top_features,
+                    recommendations,
+                    created_at
+                FROM {schema_name}.DECISION_TREE_SUMMARY
+                ORDER BY created_at DESC
+            """
+        
+        uploader.cursor.execute(query)
+        results = uploader.cursor.fetchall()
+        
+        uploader.close()
+        manager.close()
+        
+        if not results:
+            return jsonify({
+                'success': True,
+                'message': 'No decision tree results found',
+                'results': []
+            }), 200
+        
+        # Format results
+        formatted_results = []
+        for row in results:
+            formatted_results.append({
+                'analysis_id': row[0],
+                'table_name': row[1],
+                'target_variable': row[2],
+                'model_type': row[3],
+                'problem_type': row[4],
+                'test_accuracy': row[5],
+                'test_precision': row[6],
+                'test_recall': row[7],
+                'test_f1_score': row[8],
+                'test_roc_auc': row[9],
+                'train_accuracy': row[10],
+                'tree_depth': row[11],
+                'n_leaves': row[12],
+                'max_depth': row[13],
+                'min_samples_split': row[14],
+                'min_samples_leaf': row[15],
+                'total_samples': row[16],
+                'total_features': row[17],
+                'n_classes': row[18],
+                'performance_summary': row[19],
+                'top_features_summary': row[20],
+                'data_quality_summary': row[21],
+                'model_config_summary': row[22],
+                'confusion_matrix': row[23],
+                'top_features': row[24],
+                'recommendations': row[25],
+                'created_at': str(row[26]) if row[26] else None
+            })
+        
+        print(f"  ✓ Found {len(formatted_results)} result(s)")
+        
+        return jsonify({
+            'success': True,
+            'workflow_id': workflow_id,
+            'count': len(formatted_results),
+            'results': formatted_results
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ Error retrieving decision tree results: {str(e)}")
+        traceback.print_exc()
+        return jsonify({
+            'error': str(e),
+            'type': type(e).__name__
+        }), 500
+
+
+@app.route('/api/workflow/<workflow_id>/train-xgboost', methods=['POST'])
+def train_xgboost(workflow_id):
+    """
+    Train an XGBoost model on the selected target variable
+    
+    Args:
+        workflow_id: Workflow UUID
+        
+    Body:
+        {
+            "table_name": "table_name",
+            "test_size": 0.2,  // optional, default 0.2
+            "random_state": 42,  // optional, default 42
+            "n_estimators": 100,  // optional, default 100
+            "max_depth": 6,  // optional, default 6
+            "learning_rate": 0.3,  // optional, default 0.3
+            "subsample": 1.0,  // optional, default 1.0
+            "colsample_bytree": 1.0  // optional, default 1.0
+        }
+        
+    Returns:
+        JSON with model insights and performance metrics
+    """
+    try:
+        data = request.get_json()
+        table_name = data.get('table_name')
+        test_size = data.get('test_size', 0.2)
+        random_state = data.get('random_state', 42)
+        n_estimators = data.get('n_estimators', 100)
+        max_depth = data.get('max_depth', 6)
+        learning_rate = data.get('learning_rate', 0.3)
+        subsample = data.get('subsample', 1.0)
+        colsample_bytree = data.get('colsample_bytree', 1.0)
+        
+        if not table_name:
+            return jsonify({'error': 'table_name is required'}), 400
+        
+        print("\n" + "=" * 70)
+        print(f"🚀 Starting XGBoost Training")
+        print(f"   Workflow: {workflow_id}")
+        print(f"   Table: {table_name}")
+        print("=" * 70)
+        
+        # Initialize XGBoost Agent
+        agent = XGBoostAgent()
+        
+        # Train and evaluate model
+        result = agent.train_and_evaluate(
+            workflow_id=workflow_id,
+            table_name=table_name,
+            test_size=test_size,
+            random_state=random_state,
+            n_estimators=n_estimators,
+            max_depth=max_depth,
+            learning_rate=learning_rate,
+            subsample=subsample,
+            colsample_bytree=colsample_bytree
+        )
+        
+        print("=" * 70)
+        print("✅ XGBoost Training Completed")
+        print("=" * 70)
+        
+        return jsonify({
+            'success': True,
+            'workflow_id': workflow_id,
+            'table_name': table_name,
+            'model_type': 'XGBoost',
+            'insights': {
+                'target_variable': result['insights']['target_variable'],
+                'test_accuracy': result['insights']['test_accuracy'],
+                'test_precision': result['insights']['test_precision'],
+                'test_recall': result['insights']['test_recall'],
+                'test_f1': result['insights']['test_f1'],
+                'test_roc_auc': result['insights']['test_roc_auc'],
+                'n_estimators': result['insights']['n_estimators'],
+                'max_depth': result['insights']['max_depth'],
+                'learning_rate': result['insights']['learning_rate'],
+                'total_samples': result['insights']['total_samples'],
+                'total_features': result['insights']['total_features'],
+                'n_classes': result['insights']['n_classes'],
+                'performance_summary': result['insights']['performance_summary'],
+                'top_features': result['insights']['top_features'][:5],
+                'top_features_summary': result['insights']['top_features_summary'],
+                'data_quality_summary': result['insights']['data_quality_summary'],
+                'model_config_summary': result['insights']['model_config_summary'],
+                'recommendations': result['insights']['recommendations']
+            },
+            'results_location': f"WORKFLOW_{workflow_id}.XGBOOST_SUMMARY"
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ Error training XGBoost: {str(e)}")
+        traceback.print_exc()
+        return jsonify({
+            'error': str(e),
+            'type': type(e).__name__
+        }), 500
+
+
+@app.route('/api/workflow/<workflow_id>/xgboost-results', methods=['GET'])
+def get_xgboost_results(workflow_id):
+    """
+    Get XGBoost results from the XGBOOST_SUMMARY table
+    
+    Args:
+        workflow_id: Workflow UUID
+        
+    Query Parameters:
+        table_name: Optional table name to filter results
+        
+    Returns:
+        JSON with XGBoost analysis results
+    """
+    try:
+        table_name = request.args.get('table_name')
+        schema_name = f"WORKFLOW_{workflow_id}"
+        
+        print(f"\n🔍 Retrieving XGBoost results for workflow {workflow_id}")
+        
+        # Initialize workflow manager
+        manager = WorkflowManager()
+        uploader = manager.get_workflow_uploader(schema_name=schema_name)
+        
+        # Build query
+        if table_name:
+            query = f"""
+                SELECT 
+                    analysis_id,
+                    table_name,
+                    target_variable,
+                    model_type,
+                    problem_type,
+                    test_accuracy,
+                    test_precision,
+                    test_recall,
+                    test_f1_score,
+                    test_roc_auc,
+                    train_accuracy,
+                    n_estimators,
+                    max_depth,
+                    learning_rate,
+                    subsample,
+                    colsample_bytree,
+                    total_samples,
+                    total_features,
+                    n_classes,
+                    performance_summary,
+                    top_features_summary,
+                    data_quality_summary,
+                    model_config_summary,
+                    confusion_matrix,
+                    top_features,
+                    recommendations,
+                    created_at
+                FROM {schema_name}.XGBOOST_SUMMARY
+                WHERE table_name = '{table_name}'
+                ORDER BY created_at DESC
+            """
+        else:
+            query = f"""
+                SELECT 
+                    analysis_id,
+                    table_name,
+                    target_variable,
+                    model_type,
+                    problem_type,
+                    test_accuracy,
+                    test_precision,
+                    test_recall,
+                    test_f1_score,
+                    test_roc_auc,
+                    train_accuracy,
+                    n_estimators,
+                    max_depth,
+                    learning_rate,
+                    subsample,
+                    colsample_bytree,
+                    total_samples,
+                    total_features,
+                    n_classes,
+                    performance_summary,
+                    top_features_summary,
+                    data_quality_summary,
+                    model_config_summary,
+                    confusion_matrix,
+                    top_features,
+                    recommendations,
+                    created_at
+                FROM {schema_name}.XGBOOST_SUMMARY
+                ORDER BY created_at DESC
+            """
+        
+        uploader.cursor.execute(query)
+        results = uploader.cursor.fetchall()
+        
+        uploader.close()
+        manager.close()
+        
+        if not results:
+            return jsonify({
+                'success': True,
+                'message': 'No XGBoost results found',
+                'results': []
+            }), 200
+        
+        # Format results
+        formatted_results = []
+        for row in results:
+            formatted_results.append({
+                'analysis_id': row[0],
+                'table_name': row[1],
+                'target_variable': row[2],
+                'model_type': row[3],
+                'problem_type': row[4],
+                'test_accuracy': row[5],
+                'test_precision': row[6],
+                'test_recall': row[7],
+                'test_f1_score': row[8],
+                'test_roc_auc': row[9],
+                'train_accuracy': row[10],
+                'n_estimators': row[11],
+                'max_depth': row[12],
+                'learning_rate': row[13],
+                'subsample': row[14],
+                'colsample_bytree': row[15],
+                'total_samples': row[16],
+                'total_features': row[17],
+                'n_classes': row[18],
+                'performance_summary': row[19],
+                'top_features_summary': row[20],
+                'data_quality_summary': row[21],
+                'model_config_summary': row[22],
+                'confusion_matrix': row[23],
+                'top_features': row[24],
+                'recommendations': row[25],
+                'created_at': str(row[26]) if row[26] else None
+            })
+        
+        print(f"  ✓ Found {len(formatted_results)} result(s)")
+        
+        return jsonify({
+            'success': True,
+            'workflow_id': workflow_id,
+            'count': len(formatted_results),
+            'results': formatted_results
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ Error retrieving XGBoost results: {str(e)}")
+        traceback.print_exc()
+        return jsonify({
+            'error': str(e),
+            'type': type(e).__name__
+        }), 500
+
+
+@app.route('/api/workflow/<workflow_id>/logistic-regression-results', methods=['GET'])
+def get_logistic_regression_results(workflow_id):
+    """
+    Get logistic regression results from the LOGISTIC_REGRESSION_SUMMARY table
+    
+    Args:
+        workflow_id: Workflow UUID
+        
+    Query Parameters:
+        table_name: Optional table name to filter results
+        
+    Returns:
+        JSON with logistic regression analysis results
+    """
+    try:
+        table_name = request.args.get('table_name')
+        schema_name = f"WORKFLOW_{workflow_id}"
+        
+        print(f"\n🔍 Retrieving logistic regression results for workflow {workflow_id}")
+        
+        # Initialize workflow manager
+        manager = WorkflowManager()
+        uploader = manager.get_workflow_uploader(schema_name=schema_name)
+        
+        # Build query
+        if table_name:
+            query = f"""
+                SELECT 
+                    analysis_id,
+                    table_name,
+                    target_variable,
+                    model_type,
+                    problem_type,
+                    test_accuracy,
+                    test_precision,
+                    test_recall,
+                    test_f1_score,
+                    test_roc_auc,
+                    train_accuracy,
+                    total_samples,
+                    total_features,
+                    n_classes,
+                    performance_summary,
+                    top_features_summary,
+                    data_quality_summary,
+                    confusion_matrix,
+                    top_features,
+                    recommendations,
+                    created_at
+                FROM {schema_name}.LOGISTIC_REGRESSION_SUMMARY
+                WHERE table_name = '{table_name}'
+                ORDER BY created_at DESC
+            """
+        else:
+            query = f"""
+                SELECT 
+                    analysis_id,
+                    table_name,
+                    target_variable,
+                    model_type,
+                    problem_type,
+                    test_accuracy,
+                    test_precision,
+                    test_recall,
+                    test_f1_score,
+                    test_roc_auc,
+                    train_accuracy,
+                    total_samples,
+                    total_features,
+                    n_classes,
+                    performance_summary,
+                    top_features_summary,
+                    data_quality_summary,
+                    confusion_matrix,
+                    top_features,
+                    recommendations,
+                    created_at
+                FROM {schema_name}.LOGISTIC_REGRESSION_SUMMARY
+                ORDER BY created_at DESC
+            """
+        
+        uploader.cursor.execute(query)
+        results = uploader.cursor.fetchall()
+        
+        uploader.close()
+        manager.close()
+        
+        if not results:
+            return jsonify({
+                'success': True,
+                'message': 'No logistic regression results found',
+                'results': []
+            }), 200
+        
+        # Format results
+        formatted_results = []
+        for row in results:
+            formatted_results.append({
+                'analysis_id': row[0],
+                'table_name': row[1],
+                'target_variable': row[2],
+                'model_type': row[3],
+                'problem_type': row[4],
+                'test_accuracy': row[5],
+                'test_precision': row[6],
+                'test_recall': row[7],
+                'test_f1_score': row[8],
+                'test_roc_auc': row[9],
+                'train_accuracy': row[10],
+                'total_samples': row[11],
+                'total_features': row[12],
+                'n_classes': row[13],
+                'performance_summary': row[14],
+                'top_features_summary': row[15],
+                'data_quality_summary': row[16],
+                'confusion_matrix': row[17],
+                'top_features': row[18],
+                'recommendations': row[19],
+                'created_at': str(row[20]) if row[20] else None
+            })
+        
+        print(f"  ✓ Found {len(formatted_results)} result(s)")
+        
+        return jsonify({
+            'success': True,
+            'workflow_id': workflow_id,
+            'count': len(formatted_results),
+            'results': formatted_results
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ Error retrieving logistic regression results: {str(e)}")
+        traceback.print_exc()
+        return jsonify({
+            'error': str(e),
+            'type': type(e).__name__
+        }), 500
+
+
+@app.route('/api/workflow/<workflow_id>/generate-insights', methods=['POST'])
+def generate_natural_language_insights(workflow_id):
+    """
+    Generate natural language insights from EDA and ML models using Gemini
+    
+    Args:
+        workflow_id: Workflow UUID
+        
+    Body:
+        {
+            "table_name": "table_name",
+            "save_to_file": false  // optional, default false
+        }
+        
+    Returns:
+        JSON with comprehensive natural language insights
+    """
+    try:
+        data = request.get_json()
+        table_name = data.get('table_name')
+        save_to_file = data.get('save_to_file', False)
+        
+        if not table_name:
+            return jsonify({'error': 'table_name is required'}), 400
+        
+        print("\n" + "=" * 70)
+        print(f"📝 Generating Natural Language Insights")
+        print(f"   Workflow: {workflow_id}")
+        print(f"   Table: {table_name}")
+        print("=" * 70)
+        
+        # Initialize Natural Language Agent
+        agent = NaturalLanguageAgent()
+        
+        # Determine output path
+        output_path = None
+        if save_to_file:
+            output_path = f"insights_{workflow_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        
+        # Generate insights
+        result = agent.generate_insights(
+            workflow_id=workflow_id,
+            table_name=table_name,
+            output_path=output_path
+        )
+        
+        print("=" * 70)
+        print("✅ Natural Language Insights Generated")
+        print("=" * 70)
+        
+        return jsonify({
+            'success': True,
+            'workflow_id': workflow_id,
+            'table_name': table_name,
+            'insights': result['insights'],
+            'output_path': output_path
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ Error generating insights: {str(e)}")
+        traceback.print_exc()
+        return jsonify({
+            'error': str(e),
+            'type': type(e).__name__
+        }), 500
+
+
+@app.route('/api/workflow/<workflow_id>/insights-summary', methods=['GET'])
+def get_insights_summary(workflow_id):
+    """
+    Get a quick summary of available insights
+    
+    Args:
+        workflow_id: Workflow UUID
+        
+    Query Parameters:
+        table_name: Table name to check
+        
+    Returns:
+        JSON with summary of available data for insights generation
+    """
+    try:
+        table_name = request.args.get('table_name')
+        
+        if not table_name:
+            return jsonify({'error': 'table_name query parameter is required'}), 400
+        
+        schema_name = f"WORKFLOW_{workflow_id}"
+        
+        print(f"\n📊 Checking available insights data for workflow {workflow_id}")
+        
+        # Initialize workflow manager
+        manager = WorkflowManager()
+        uploader = manager.get_workflow_uploader(schema_name=schema_name)
+        
+        summary = {
+            'workflow_id': workflow_id,
+            'table_name': table_name,
+            'eda_available': False,
+            'ml_models_available': []
+        }
+        
+        # Check EDA data
+        try:
+            uploader.cursor.execute(f"""
+                SELECT COUNT(*) FROM {schema_name}.workflow_eda_summary
+                WHERE table_name = '{table_name}'
+            """)
+            eda_count = uploader.cursor.fetchone()[0]
+            summary['eda_available'] = eda_count > 0
+        except:
+            pass
+        
+        # Check ML models
+        model_tables = [
+            ('LOGISTIC_REGRESSION_SUMMARY', 'Logistic Regression'),
+            ('DECISION_TREE_SUMMARY', 'Decision Tree'),
+            ('XGBOOST_SUMMARY', 'XGBoost')
+        ]
+        
+        for table, model_type in model_tables:
+            try:
+                uploader.cursor.execute(f"""
+                    SELECT test_accuracy FROM {schema_name}.{table}
+                    WHERE table_name = '{table_name}'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """)
+                result = uploader.cursor.fetchone()
+                if result:
+                    summary['ml_models_available'].append({
+                        'model_type': model_type,
+                        'accuracy': float(result[0])
+                    })
+            except:
+                pass
+        
+        uploader.close()
+        manager.close()
+        
+        print(f"  ✓ EDA Available: {summary['eda_available']}")
+        print(f"  ✓ ML Models Available: {len(summary['ml_models_available'])}")
+        
+        return jsonify({
+            'success': True,
+            'summary': summary,
+            'ready_for_insights': summary['eda_available'] or len(summary['ml_models_available']) > 0
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ Error checking insights data: {str(e)}")
         traceback.print_exc()
         return jsonify({
             'error': str(e),
