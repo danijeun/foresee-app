@@ -1,5 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
-import Footer from "../components/Footer";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 
 const API_BASE_URL = "http://localhost:5000/api";
 
@@ -20,6 +19,13 @@ function Foresee() {
   const [stageAfterSuccess, setStageAfterSuccess] = useState(false); // show target buttons
   const [showModal, setShowModal] = useState(false);
 
+  // ✅ Target variable suggestions
+  const [targetSuggestions, setTargetSuggestions] = useState([]);
+  const [loadingTargets, setLoadingTargets] = useState(false);
+  const [targetError, setTargetError] = useState(null);
+  const [selectedTarget, setSelectedTarget] = useState(null);
+  const [savingTarget, setSavingTarget] = useState(false);
+
   // Rotating loading messages
   const loadingMessages = [
     "Loading your data...",
@@ -33,6 +39,42 @@ function Foresee() {
   const [activeMsgIdx, setActiveMsgIdx] = useState(0);
   const [prevMsgIdx, setPrevMsgIdx] = useState(null);
   const MESSAGE_FADE_TIME = 250; // 0.25s fade
+
+  // ✅ Define fetchTargetSuggestions with useCallback before it's used
+  const fetchTargetSuggestions = useCallback(async () => {
+    if (!result?.workflow?.id || !result?.upload?.table_name) {
+      console.log("⚠️ Missing workflow or table info, skipping target suggestions");
+      return;
+    }
+
+    setLoadingTargets(true);
+    setTargetError(null);
+
+    try {
+      console.log(`🎯 Fetching target suggestions for workflow: ${result.workflow.id}, table: ${result.upload.table_name}`);
+      const response = await fetch(
+        `${API_BASE_URL}/target-suggestions/${result.workflow.id}/${result.upload.table_name}`
+      );
+      const data = await response.json();
+
+      console.log("📡 Target suggestions response:", data);
+
+      if (response.ok) {
+        setTargetSuggestions(data.recommendations || []);
+        console.log("✅ Target suggestions loaded:", data.recommendations);
+      } else {
+        const errorMsg = data.error || "Failed to load target suggestions";
+        setTargetError(errorMsg);
+        console.error("❌ Target suggestions error:", errorMsg);
+      }
+    } catch (err) {
+      const errorMsg = `Failed to fetch target suggestions: ${err.message}`;
+      setTargetError(errorMsg);
+      console.error("❌ Target fetch error:", err);
+    } finally {
+      setLoadingTargets(false);
+    }
+  }, [result]);
 
   // ✅ Fixed non-overlapping fade logic for loading messages
   useEffect(() => {
@@ -53,9 +95,12 @@ function Foresee() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stage, activeMsgIdx]);
 
-  // ✅ When entering success: wait 2s, fade out header, then show target buttons
+  // ✅ When entering success: fetch targets, wait 2s, fade out header, then show target buttons
   useEffect(() => {
-    if (stage === "success") {
+    if (stage === "success" && result) {
+      // Fetch target variable suggestions
+      fetchTargetSuggestions();
+
       const startFade = setTimeout(() => {
         setSuccessHeaderFading(true); // apply fade-out class
       }, 2000); // show for 2s
@@ -70,7 +115,7 @@ function Foresee() {
         clearTimeout(swapToTargets);
       };
     }
-  }, [stage]);
+  }, [stage, result, fetchTargetSuggestions]);
 
   const handleDrag = (e) => {
     e.preventDefault();
@@ -106,6 +151,56 @@ function Foresee() {
     }
   };
 
+  const handleSelectTarget = async (suggestion) => {
+    if (!result?.workflow?.id || !result?.upload?.table_name) {
+      setError("Missing workflow information");
+      return;
+    }
+
+    setSavingTarget(true);
+    setTargetError(null);
+
+    try {
+      console.log(`💾 Saving target selection: ${suggestion.variable}`);
+      
+      const response = await fetch(
+        `${API_BASE_URL}/workflow/${result.workflow.id}/select-target`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            target_variable: suggestion.variable,
+            table_name: result.upload.table_name,
+            problem_type: suggestion.problem_type,
+            importance_score: suggestion.importance_score,
+          }),
+        }
+      );
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setSelectedTarget(suggestion.variable);
+        console.log("✅ Target variable saved:", data);
+        
+        // Show success message for 2 seconds
+        setTimeout(() => {
+          alert(`Target variable "${suggestion.variable}" saved successfully! Ready for model training.`);
+        }, 100);
+      } else {
+        setTargetError(data.error || "Failed to save target selection");
+        console.error("❌ Target selection error:", data.error);
+      }
+    } catch (err) {
+      setTargetError(`Failed to save target: ${err.message}`);
+      console.error("❌ Target save error:", err);
+    } finally {
+      setSavingTarget(false);
+    }
+  };
+
   const handleUpload = async () => {
     if (!file) {
       setError("Please select a file first");
@@ -118,6 +213,9 @@ function Foresee() {
     setResult(null);
     setActiveMsgIdx(0);
     setPrevMsgIdx(null);
+    setTargetSuggestions([]);
+    setTargetError(null);
+    setSelectedTarget(null);
 
     const formData = new FormData();
     formData.append("file", file);
@@ -427,22 +525,118 @@ function Foresee() {
                 <h2 className="text-2xl font-bold mb-6">
                   Please select a prediction target
                 </h2>
+                
+                {loadingTargets && (
+                  <div className="flex items-center justify-center gap-2 mb-4">
+                    <svg
+                      className="animate-spin h-5 w-5 text-blue-600"
+                      xmlns="http://www.w3.org/2000/svg"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                    >
+                      <circle
+                        className="opacity-25"
+                        cx="12"
+                        cy="12"
+                        r="10"
+                        stroke="currentColor"
+                        strokeWidth="4"
+                      ></circle>
+                      <path
+                        className="opacity-75"
+                        fill="currentColor"
+                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                      ></path>
+                    </svg>
+                    <span className="text-gray-600">Loading target recommendations...</span>
+                  </div>
+                )}
+
+                {targetError && (
+                  <div className="mb-4 p-3 bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 text-sm rounded">
+                    {targetError}
+                  </div>
+                )}
+
+                {selectedTarget && (
+                  <div className="mb-4 p-4 bg-green-100 border-l-4 border-green-500 text-green-700 rounded">
+                    <div className="flex items-center">
+                      <svg className="w-6 h-6 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd"/>
+                      </svg>
+                      <div>
+                        <p className="font-semibold">Target Selected!</p>
+                        <p className="text-sm">Target variable "{selectedTarget}" saved for model training</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 <div className="flex flex-col sm:flex-row gap-4 justify-center">
-                  <button className="px-6 py-3 bg-blue-600 text-white rounded-lg">
-                    Option A
-                  </button>
-                  <button className="px-6 py-3 bg-blue-600 text-white rounded-lg">
-                    Option B
-                  </button>
-                  <button className="px-6 py-3 bg-blue-600 text-white rounded-lg">
-                    Option C
-                  </button>
-                  <button
-                    onClick={() => setShowModal(true)}
-                    className="px-6 py-3 bg-gray-700 text-white rounded-lg"
-                  >
-                    Other Options
-                  </button>
+                  {targetSuggestions.length >= 1 && (
+                    <button 
+                      onClick={() => handleSelectTarget(targetSuggestions[0])}
+                      disabled={savingTarget || selectedTarget === targetSuggestions[0].variable}
+                      className={`px-6 py-3 rounded-lg transition ${
+                        selectedTarget === targetSuggestions[0].variable
+                          ? 'bg-green-600 text-white'
+                          : 'bg-blue-600 text-white hover:bg-blue-700'
+                      } disabled:opacity-50 disabled:cursor-not-allowed`}
+                    >
+                      <div className="flex flex-col items-start">
+                        <span className="font-semibold">{targetSuggestions[0].variable}</span>
+                        <span className="text-xs opacity-80">{targetSuggestions[0].problem_type}</span>
+                      </div>
+                    </button>
+                  )}
+                  {targetSuggestions.length >= 2 && (
+                    <button 
+                      onClick={() => handleSelectTarget(targetSuggestions[1])}
+                      disabled={savingTarget || selectedTarget === targetSuggestions[1].variable}
+                      className={`px-6 py-3 rounded-lg transition ${
+                        selectedTarget === targetSuggestions[1].variable
+                          ? 'bg-green-600 text-white'
+                          : 'bg-blue-600 text-white hover:bg-blue-700'
+                      } disabled:opacity-50 disabled:cursor-not-allowed`}
+                    >
+                      <div className="flex flex-col items-start">
+                        <span className="font-semibold">{targetSuggestions[1].variable}</span>
+                        <span className="text-xs opacity-80">{targetSuggestions[1].problem_type}</span>
+                      </div>
+                    </button>
+                  )}
+                  {targetSuggestions.length >= 3 && (
+                    <button 
+                      onClick={() => handleSelectTarget(targetSuggestions[2])}
+                      disabled={savingTarget || selectedTarget === targetSuggestions[2].variable}
+                      className={`px-6 py-3 rounded-lg transition ${
+                        selectedTarget === targetSuggestions[2].variable
+                          ? 'bg-green-600 text-white'
+                          : 'bg-blue-600 text-white hover:bg-blue-700'
+                      } disabled:opacity-50 disabled:cursor-not-allowed`}
+                    >
+                      <div className="flex flex-col items-start">
+                        <span className="font-semibold">{targetSuggestions[2].variable}</span>
+                        <span className="text-xs opacity-80">{targetSuggestions[2].problem_type}</span>
+                      </div>
+                    </button>
+                  )}
+                  {targetSuggestions.length > 3 && (
+                    <button
+                      onClick={() => setShowModal(true)}
+                      className="px-6 py-3 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition"
+                    >
+                      Other Options ({targetSuggestions.length - 3} more)
+                    </button>
+                  )}
+                  {targetSuggestions.length === 0 && !loadingTargets && (
+                    <button
+                      onClick={() => setShowModal(true)}
+                      className="px-6 py-3 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition"
+                    >
+                      Select Target Variable
+                    </button>
+                  )}
                 </div>
               </div>
             )}
@@ -531,27 +725,81 @@ function Foresee() {
 
       {/* ✅ Modal for Other Options */}
       {showModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white p-6 rounded-lg w-80 text-center shadow-lg">
-            <h3 className="text-lg font-semibold mb-4">Select Another Target</h3>
-            <ul className="space-y-2 mb-6 text-left">
-              <li className="py-2 px-4 bg-gray-100 rounded cursor-pointer">Target 4</li>
-              <li className="py-2 px-4 bg-gray-100 rounded cursor-pointer">Target 5</li>
-              <li className="py-2 px-4 bg-gray-100 rounded cursor-pointer">Target 6</li>
-              <li className="py-2 px-4 bg-gray-100 rounded cursor-pointer">Target 7</li>
-            </ul>
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white p-6 rounded-lg max-w-2xl w-full max-h-[80vh] overflow-y-auto shadow-xl">
+            <h3 className="text-xl font-bold mb-4 text-center">
+              All Target Variable Recommendations
+            </h3>
+            <p className="text-sm text-gray-600 mb-6 text-center">
+              Ranked by importance for machine learning prediction
+            </p>
+            
+            {targetSuggestions.length > 0 ? (
+              <ul className="space-y-3 mb-6">
+                {targetSuggestions.map((suggestion, idx) => (
+                  <li
+                    key={idx}
+                    onClick={() => {
+                      handleSelectTarget(suggestion);
+                      setShowModal(false);
+                    }}
+                    className={`p-4 rounded-lg border cursor-pointer transition ${
+                      selectedTarget === suggestion.variable
+                        ? 'bg-green-50 border-green-300'
+                        : 'bg-gray-50 border-gray-200 hover:bg-blue-50 hover:border-blue-300'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="font-bold text-blue-600">#{suggestion.rank}</span>
+                          <span className="font-semibold text-gray-800">
+                            {suggestion.variable}
+                          </span>
+                          {suggestion.importance_score && (
+                            <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
+                              Score: {suggestion.importance_score}/100
+                            </span>
+                          )}
+                          {selectedTarget === suggestion.variable && (
+                            <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded font-medium">
+                              ✓ Selected
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-sm text-gray-600 mb-2">
+                          <span className="font-medium">Type:</span> {suggestion.problem_type}
+                        </div>
+                        {suggestion.why_important && (
+                          <div className="text-sm text-gray-700 mb-2">
+                            <span className="font-medium">Why Important:</span> {suggestion.why_important}
+                          </div>
+                        )}
+                        {suggestion.predictability && (
+                          <div className="text-xs text-gray-500">
+                            <span className="font-medium">Predictability:</span> {suggestion.predictability}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className="text-center py-8 text-gray-500">
+                No target suggestions available yet
+              </div>
+            )}
+            
             <button
               onClick={() => setShowModal(false)}
-              className="px-4 py-2 bg-gray-700 text-white rounded"
+              className="w-full px-4 py-3 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition font-semibold"
             >
               Close
             </button>
           </div>
         </div>
       )}
-
-      <Footer />
-
     </div>
   );
 }
