@@ -35,26 +35,15 @@ class TargetVariableAgent:
             raise ValueError("GEMINI_API_KEY must be provided or set in environment")
         
         genai.configure(api_key=api_key)
-        # Use the correct model name for the current API
-        # Try models in order of preference
-        model_names = [
-            'gemini-1.5-flash-001',  # Specific version
-            'gemini-1.5-pro-001',    # Pro version
-            'gemini-pro',            # Original stable
-        ]
         
-        self.model = None
-        for model_name in model_names:
-            try:
-                self.model = genai.GenerativeModel(model_name)
-                print(f"✅ Using Gemini model: {model_name}")
-                break
-            except Exception as e:
-                print(f"⚠️ Model {model_name} not available: {e}")
-                continue
+        # Use the confirmed working model
+        model_name = 'models/gemini-2.5-flash-preview-05-20'
         
-        if self.model is None:
-            raise ValueError("No Gemini models available. Check your API key and model access.")
+        try:
+            self.model = genai.GenerativeModel(model_name)
+            print(f"✅ Using Gemini model: {model_name}")
+        except Exception as e:
+            raise ValueError(f"Failed to initialize Gemini model {model_name}: {str(e)}. Check your API key.")
         
         # Initialize workflow manager
         self.workflow_manager = None
