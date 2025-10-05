@@ -12,6 +12,7 @@ import traceback
 import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
+from datetime import datetime
 
 # Add services to path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -23,6 +24,7 @@ from agents.target_variable_agent import TargetVariableAgent
 from agents.logistic_regression_agent import LogisticRegressionAgent
 from agents.decision_tree_agent import DecisionTreeAgent
 from agents.xgboost_agent import XGBoostAgent
+from agents.natural_language_agent import NaturalLanguageAgent
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for frontend communication
@@ -765,6 +767,53 @@ def select_target_variable(workflow_id):
                 'message': 'XGBoost training failed'
             }
         
+        # Automatically generate Natural Language Insights after ML models complete
+        nl_result = None
+        nl_error = None
+        
+        try:
+            print("\n" + "=" * 70)
+            print("📝 GENERATING NATURAL LANGUAGE INSIGHTS")
+            print("=" * 70)
+            
+            # Generate output path for JSON file
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            backend_dir = Path(__file__).parent
+            insights_dir = backend_dir / "insights"
+            output_path = insights_dir / f"insights_{workflow_id}_{timestamp}.json"
+            output_path = str(output_path)
+            
+            nl_agent = NaturalLanguageAgent()
+            nl_result = nl_agent.generate_insights(
+                workflow_id=workflow_id,
+                table_name=table_name,
+                output_path=output_path
+            )
+            
+            print("=" * 70)
+            print("✅ Natural Language Insights Generated!")
+            print("=" * 70)
+            
+        except Exception as nl_e:
+            nl_error = str(nl_e)
+            print(f"❌ Natural Language Insights Generation Failed: {nl_error}")
+            traceback.print_exc()
+        
+        # Add Natural Language Insights to response
+        if nl_result and nl_result.get('success'):
+            response['natural_language_insights'] = {
+                'success': True,
+                'file_path': nl_result.get('output_path'),
+                'insights': nl_result.get('insights'),
+                'message': 'Natural language insights generated successfully'
+            }
+        elif nl_error:
+            response['natural_language_insights'] = {
+                'success': False,
+                'error': nl_error,
+                'message': 'Natural language insights generation failed'
+            }
+        
         return jsonify(response), 200
         
     except Exception as e:
@@ -1499,6 +1548,164 @@ def get_logistic_regression_results(workflow_id):
         
     except Exception as e:
         print(f"❌ Error retrieving logistic regression results: {str(e)}")
+        traceback.print_exc()
+        return jsonify({
+            'error': str(e),
+            'type': type(e).__name__
+        }), 500
+
+
+@app.route('/api/workflow/<workflow_id>/generate-insights', methods=['POST'])
+def generate_natural_language_insights(workflow_id):
+    """
+    Generate natural language insights from EDA and ML models using Gemini
+    
+    Args:
+        workflow_id: Workflow UUID
+        
+    Body:
+        {
+            "table_name": "table_name",
+            "save_to_file": false  // optional, default false
+        }
+        
+    Returns:
+        JSON with comprehensive natural language insights
+    """
+    try:
+        data = request.get_json()
+        table_name = data.get('table_name')
+        save_to_file = data.get('save_to_file', False)
+        
+        if not table_name:
+            return jsonify({'error': 'table_name is required'}), 400
+        
+        print("\n" + "=" * 70)
+        print(f"📝 Generating Natural Language Insights")
+        print(f"   Workflow: {workflow_id}")
+        print(f"   Table: {table_name}")
+        print("=" * 70)
+        
+        # Initialize Natural Language Agent
+        agent = NaturalLanguageAgent()
+        
+        # Determine output path
+        output_path = None
+        if save_to_file:
+            output_path = f"insights_{workflow_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        
+        # Generate insights
+        result = agent.generate_insights(
+            workflow_id=workflow_id,
+            table_name=table_name,
+            output_path=output_path
+        )
+        
+        print("=" * 70)
+        print("✅ Natural Language Insights Generated")
+        print("=" * 70)
+        
+        return jsonify({
+            'success': True,
+            'workflow_id': workflow_id,
+            'table_name': table_name,
+            'insights': result['insights'],
+            'output_path': output_path
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ Error generating insights: {str(e)}")
+        traceback.print_exc()
+        return jsonify({
+            'error': str(e),
+            'type': type(e).__name__
+        }), 500
+
+
+@app.route('/api/workflow/<workflow_id>/insights-summary', methods=['GET'])
+def get_insights_summary(workflow_id):
+    """
+    Get a quick summary of available insights
+    
+    Args:
+        workflow_id: Workflow UUID
+        
+    Query Parameters:
+        table_name: Table name to check
+        
+    Returns:
+        JSON with summary of available data for insights generation
+    """
+    try:
+        table_name = request.args.get('table_name')
+        
+        if not table_name:
+            return jsonify({'error': 'table_name query parameter is required'}), 400
+        
+        schema_name = f"WORKFLOW_{workflow_id}"
+        
+        print(f"\n📊 Checking available insights data for workflow {workflow_id}")
+        
+        # Initialize workflow manager
+        manager = WorkflowManager()
+        uploader = manager.get_workflow_uploader(schema_name=schema_name)
+        
+        summary = {
+            'workflow_id': workflow_id,
+            'table_name': table_name,
+            'eda_available': False,
+            'ml_models_available': []
+        }
+        
+        # Check EDA data
+        try:
+            uploader.cursor.execute(f"""
+                SELECT COUNT(*) FROM {schema_name}.workflow_eda_summary
+                WHERE table_name = '{table_name}'
+            """)
+            eda_count = uploader.cursor.fetchone()[0]
+            summary['eda_available'] = eda_count > 0
+        except:
+            pass
+        
+        # Check ML models
+        model_tables = [
+            ('LOGISTIC_REGRESSION_SUMMARY', 'Logistic Regression'),
+            ('DECISION_TREE_SUMMARY', 'Decision Tree'),
+            ('XGBOOST_SUMMARY', 'XGBoost')
+        ]
+        
+        for table, model_type in model_tables:
+            try:
+                uploader.cursor.execute(f"""
+                    SELECT test_accuracy FROM {schema_name}.{table}
+                    WHERE table_name = '{table_name}'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """)
+                result = uploader.cursor.fetchone()
+                if result:
+                    summary['ml_models_available'].append({
+                        'model_type': model_type,
+                        'accuracy': float(result[0])
+                    })
+            except:
+                pass
+        
+        uploader.close()
+        manager.close()
+        
+        print(f"  ✓ EDA Available: {summary['eda_available']}")
+        print(f"  ✓ ML Models Available: {len(summary['ml_models_available'])}")
+        
+        return jsonify({
+            'success': True,
+            'summary': summary,
+            'ready_for_insights': summary['eda_available'] or len(summary['ml_models_available']) > 0
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ Error checking insights data: {str(e)}")
         traceback.print_exc()
         return jsonify({
             'error': str(e),
