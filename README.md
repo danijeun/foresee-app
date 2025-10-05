@@ -306,8 +306,40 @@ npm install
 
 ## 🎬 Running the Application
 
-### Start Backend (Terminal 1)
+### Option 1: Quick Start (One Terminal) ⭐
 
+**Windows:**
+```bash
+start.bat
+```
+
+**macOS/Linux:**
+```bash
+chmod +x start.sh  # First time only
+./start.sh
+```
+
+This will automatically:
+1. Activate the Python virtual environment
+2. Start the backend server
+3. Start the frontend dev server
+
+### Option 2: Using npm (One Terminal)
+
+First, install `concurrently`:
+```bash
+cd frontend
+npm install
+```
+
+Then run both servers:
+```bash
+npm run dev:all
+```
+
+### Option 3: Manual (Two Terminals)
+
+**Terminal 1 - Backend:**
 ```bash
 # Activate virtual environment
 myenv\Scripts\activate  # Windows
@@ -319,23 +351,18 @@ cd backend
 python app.py
 ```
 
-Backend will run on `http://localhost:5000`
-
-### Start Frontend (Terminal 2)
-
+**Terminal 2 - Frontend:**
 ```bash
 cd frontend
 npm run dev
 ```
 
-Frontend will run on `http://localhost:5173`
-
 ### Access the Application
 
 Open your browser and navigate to:
-```
-http://localhost:5173
-```
+- **Frontend:** `http://localhost:5173`
+- **Backend API:** `http://localhost:5000`
+- **API Docs:** `http://localhost:5000/api/health` (health check)
 
 ---
 
