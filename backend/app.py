@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from services.workflow_manager import WorkflowManager
 from services.snowflake_ingestion import SnowflakeCSVUploader
+from services.eda_service import WorkflowEDAService
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for frontend communication
@@ -101,14 +102,26 @@ def upload_csv():
         preview_data = uploader.query(f"SELECT * FROM {table_name} LIMIT 5")
         column_names = [desc[0] for desc in uploader.cursor.description]
         
-        # Clean up connections
+        # Clean up upload connections
         uploader.close()
         manager.close()
         
-        # Prepare response
+        # Run EDA Analysis automatically
+        print("\n" + "=" * 70)
+        print("🤖 Running Automatic EDA Analysis...")
+        print("=" * 70)
+        
+        eda_service = WorkflowEDAService(workflow['schema_name'])
+        eda_result = eda_service.run_eda_after_upload(
+            table_name=table_name,
+            workflow_id=workflow['workflow_id'],
+            target_column=None  # Auto-detect or specify via request
+        )
+        
+        # Prepare response with EDA results
         response = {
             'success': True,
-            'message': 'File uploaded successfully',
+            'message': 'File uploaded successfully and EDA completed',
             'workflow': {
                 'id': workflow['workflow_id'],
                 'schema': workflow['schema_name'],
@@ -125,10 +138,12 @@ def upload_csv():
             'preview': {
                 'columns': column_names,
                 'data': [list(row) for row in preview_data]
-            }
+            },
+            'eda': eda_result  # Include EDA analysis results
         }
         
-        print("✅ Upload completed successfully")
+        print("✅ Upload and EDA completed successfully")
+        print("=" * 70)
         return jsonify(response), 200
         
     except Exception as e:
@@ -236,6 +251,126 @@ def execute_query():
             'columns': column_names,
             'data': [list(row) for row in results],
             'row_count': len(results)
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ Error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/eda/<workflow_id>/<analysis_id>', methods=['GET'])
+def get_eda_results(workflow_id, analysis_id):
+    """
+    Get EDA results for a specific analysis
+    
+    Args:
+        workflow_id: Workflow UUID
+        analysis_id: EDA analysis ID
+        
+    Returns:
+        JSON with complete EDA results
+    """
+    try:
+        schema_name = f"WORKFLOW_{workflow_id}"
+        eda_service = WorkflowEDAService(schema_name)
+        
+        results = eda_service.get_eda_results(analysis_id)
+        
+        if not results:
+            return jsonify({'error': 'EDA analysis not found'}), 404
+        
+        return jsonify({
+            'success': True,
+            'data': results
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ Error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/eda/<workflow_id>/latest/<table_name>', methods=['GET'])
+def get_latest_eda(workflow_id, table_name):
+    """
+    Get the latest EDA analysis for a specific table
+    
+    Args:
+        workflow_id: Workflow UUID
+        table_name: Table name
+        
+    Returns:
+        JSON with latest EDA results
+    """
+    try:
+        schema_name = f"WORKFLOW_{workflow_id}"
+        eda_service = WorkflowEDAService(schema_name)
+        
+        results = eda_service.get_latest_eda_for_table(table_name)
+        
+        if not results:
+            return jsonify({'error': 'No EDA analysis found for this table'}), 404
+        
+        return jsonify({
+            'success': True,
+            'data': results
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ Error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/eda/<workflow_id>/summary', methods=['GET'])
+def get_workflow_eda_summary(workflow_id):
+    """
+    Get summary of all EDA analyses in a workflow
+    
+    Args:
+        workflow_id: Workflow UUID
+        
+    Returns:
+        JSON with list of all EDA analyses
+    """
+    try:
+        schema_name = f"WORKFLOW_{workflow_id}"
+        
+        manager = WorkflowManager()
+        uploader = manager.get_workflow_uploader(schema_name=schema_name)
+        
+        # Query all EDA summaries
+        query = f"""
+            SELECT 
+                analysis_id,
+                table_name,
+                total_rows,
+                total_columns,
+                duplicate_percentage,
+                analysis_type,
+                target_column
+            FROM {schema_name}.workflow_eda_summary
+        """
+        
+        results = uploader.query(query)
+        
+        analyses = []
+        for row in results:
+            analyses.append({
+                'analysis_id': row[0],
+                'table_name': row[1],
+                'total_rows': row[2],
+                'total_columns': row[3],
+                'duplicate_percentage': row[4],
+                'analysis_type': row[5],
+                'target_column': row[6]
+            })
+        
+        uploader.close()
+        manager.close()
+        
+        return jsonify({
+            'success': True,
+            'count': len(analyses),
+            'analyses': analyses
         }), 200
         
     except Exception as e:
