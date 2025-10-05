@@ -38,6 +38,50 @@ def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
+def cleanup_workflow_reports(workflow_id: str):
+    """
+    Clean up old PDF and JSON reports for a specific workflow
+    Called when starting a new workflow to remove previous analysis files
+    
+    Args:
+        workflow_id: UUID of the workflow to clean up
+    """
+    try:
+        backend_dir = Path(__file__).parent
+        
+        # Clean up PDFs
+        pdf_dir = backend_dir / "pdf"
+        pdf_files = []
+        if pdf_dir.exists():
+            pdf_pattern = f"insights_{workflow_id}_*.pdf"
+            pdf_files = list(pdf_dir.glob(pdf_pattern))
+            for pdf_file in pdf_files:
+                try:
+                    pdf_file.unlink()
+                    print(f"   🗑️  Deleted old PDF: {pdf_file.name}")
+                except Exception as e:
+                    print(f"   ⚠️  Could not delete PDF {pdf_file.name}: {e}")
+        
+        # Clean up JSONs
+        insights_dir = backend_dir / "insights"
+        json_files = []
+        if insights_dir.exists():
+            json_pattern = f"insights_{workflow_id}_*.json"
+            json_files = list(insights_dir.glob(json_pattern))
+            for json_file in json_files:
+                try:
+                    json_file.unlink()
+                    print(f"   🗑️  Deleted old JSON: {json_file.name}")
+                except Exception as e:
+                    print(f"   ⚠️  Could not delete JSON {json_file.name}: {e}")
+        
+        if pdf_files or json_files:
+            print(f"   ✓ Cleaned up {len(pdf_files)} PDFs and {len(json_files)} JSONs for workflow {workflow_id}")
+    
+    except Exception as e:
+        print(f"   ⚠️  Error during cleanup: {e}")
+
+
 def run_eda_agent(schema_name, table_name, workflow_id):
     """
     Run EDA Agent in a separate thread
@@ -171,6 +215,10 @@ def upload_csv():
         # Create a new workflow
         print("📦 Creating workflow...")
         workflow = manager.create_workflow(workflow_name=workflow_name)
+        
+        # Clean up old reports for this workflow
+        print("🧹 Cleaning up old reports...")
+        cleanup_workflow_reports(workflow['workflow_id'])
         
         # Get uploader for this workflow
         print("📤 Uploading CSV to Snowflake...")
@@ -1718,7 +1766,6 @@ def get_insights_summary(workflow_id):
 def view_report(workflow_id):
     """
     View the latest generated PDF report for a workflow in browser
-    Automatically deletes PDF and JSON files after serving
     
     Args:
         workflow_id: Workflow UUID
@@ -1746,37 +1793,11 @@ def view_report(workflow_id):
         
         print(f"📄 Viewing PDF: {latest_pdf.name}")
         
-        # Read PDF into memory before deletion
-        import io
-        with open(latest_pdf, 'rb') as f:
-            pdf_data = io.BytesIO(f.read())
-        
-        # Find and delete corresponding JSON file
-        json_filename = latest_pdf.name.replace('.pdf', '.json')
-        json_path = backend_dir / "insights" / json_filename
-        
-        # Delete the PDF file
-        try:
-            latest_pdf.unlink()
-            print(f"   ✓ Deleted PDF: {latest_pdf.name}")
-        except Exception as del_e:
-            print(f"   ⚠️  Could not delete PDF: {del_e}")
-        
-        # Delete the JSON file
-        if json_path.exists():
-            try:
-                json_path.unlink()
-                print(f"   ✓ Deleted JSON: {json_filename}")
-            except Exception as del_e:
-                print(f"   ⚠️  Could not delete JSON: {del_e}")
-        
         from flask import send_file
-        pdf_data.seek(0)
         return send_file(
-            pdf_data,
+            latest_pdf,
             mimetype='application/pdf',
-            as_attachment=False,
-            download_name=latest_pdf.name
+            as_attachment=False
         )
         
     except Exception as e:
@@ -1792,7 +1813,6 @@ def view_report(workflow_id):
 def download_report(workflow_id):
     """
     Download the latest generated PDF report for a workflow
-    Automatically deletes PDF and JSON files after serving
     
     Args:
         workflow_id: Workflow UUID
@@ -1820,34 +1840,9 @@ def download_report(workflow_id):
         
         print(f"📥 Downloading PDF: {latest_pdf.name}")
         
-        # Read PDF into memory before deletion
-        import io
-        with open(latest_pdf, 'rb') as f:
-            pdf_data = io.BytesIO(f.read())
-        
-        # Find and delete corresponding JSON file
-        json_filename = latest_pdf.name.replace('.pdf', '.json')
-        json_path = backend_dir / "insights" / json_filename
-        
-        # Delete the PDF file
-        try:
-            latest_pdf.unlink()
-            print(f"   ✓ Deleted PDF: {latest_pdf.name}")
-        except Exception as del_e:
-            print(f"   ⚠️  Could not delete PDF: {del_e}")
-        
-        # Delete the JSON file
-        if json_path.exists():
-            try:
-                json_path.unlink()
-                print(f"   ✓ Deleted JSON: {json_filename}")
-            except Exception as del_e:
-                print(f"   ⚠️  Could not delete JSON: {del_e}")
-        
         from flask import send_file
-        pdf_data.seek(0)
         return send_file(
-            pdf_data,
+            latest_pdf,
             mimetype='application/pdf',
             as_attachment=True,
             download_name=f"ML_Report_{workflow_id}.pdf"

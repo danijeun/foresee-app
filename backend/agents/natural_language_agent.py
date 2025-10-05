@@ -536,7 +536,34 @@ Be specific, quantitative, and actionable. Use actual numbers from the data.
         feature_importance_charts = {}
         
         for model in ml_data:
-            if model.get('confusion_matrix'):
+            # Only generate confusion matrix for true classification problems
+            # Check if the target was converted from continuous/regression
+            preprocessing_details = model.get('preprocessing_details')
+            if isinstance(preprocessing_details, str):
+                try:
+                    preprocessing_details = json.loads(preprocessing_details)
+                except:
+                    preprocessing_details = {}
+            elif not preprocessing_details:
+                preprocessing_details = {}
+            
+            # Check target conversion - skip if it was originally continuous/regression
+            target_conversion = preprocessing_details.get('target_conversion', '')
+            is_converted_regression = (
+                'continuous_to' in target_conversion.lower() or
+                'regression' in target_conversion.lower() or
+                'binned' in target_conversion.lower()
+            )
+            
+            n_classes = model.get('n_classes')
+            is_classification = (
+                n_classes and 
+                n_classes > 1 and 
+                n_classes <= 20 and
+                not is_converted_regression
+            )
+            
+            if model.get('confusion_matrix') and is_classification:
                 cm_chart = self._generate_confusion_matrix_chart(
                     model['confusion_matrix'],
                     model['model_type']
@@ -697,7 +724,10 @@ Be specific, quantitative, and actionable. Use actual numbers from the data.
             }
         }
         
-        print(f"   ✓ Generated {len(confusion_matrices)} confusion matrices")
+        if confusion_matrices:
+            print(f"   ✓ Generated {len(confusion_matrices)} confusion matrices (true classification problems)")
+        else:
+            print(f"   ℹ️  No confusion matrices (regression problems are excluded)")
         print(f"   ✓ Generated {len(feature_importance_charts)} feature importance charts")
         print(f"   ✓ Generated comparison table with {len(metrics_table)} models")
         
@@ -1015,24 +1045,90 @@ Be specific, quantitative, and actionable. Use actual numbers from the data.
             pdf_dir.mkdir(parents=True, exist_ok=True)
             pdf_path = pdf_dir / json_file.name.replace('.json', '.pdf')
             
-            # Create PDF document
+            # Create PDF document with tighter margins
             doc = SimpleDocTemplate(str(pdf_path), pagesize=letter,
-                                   leftMargin=0.75*inch, rightMargin=0.75*inch,
-                                   topMargin=0.75*inch, bottomMargin=0.75*inch)
+                                   leftMargin=0.6*inch, rightMargin=0.6*inch,
+                                   topMargin=0.6*inch, bottomMargin=0.6*inch)
             story = []
             styles = getSampleStyleSheet()
             
-            # Custom styles
-            styles.add(ParagraphStyle(name="CenteredTitle", alignment=TA_CENTER,
-                                     fontSize=20, spaceAfter=20, leading=24, textColor=colors.HexColor("#1a1a1a")))
-            styles.add(ParagraphStyle(name="Justified", alignment=TA_JUSTIFY,
-                                     fontSize=11, leading=16))
-            styles.add(ParagraphStyle(name="SectionHeader", fontSize=16, leading=18,
-                                     spaceBefore=20, spaceAfter=12, textColor=colors.HexColor("#2c3e50")))
-            styles.add(ParagraphStyle(name="SubHeader", fontSize=13, leading=16,
-                                     spaceBefore=12, spaceAfter=8, textColor=colors.HexColor("#34495e")))
-            styles.add(ParagraphStyle(name="Subtle", fontSize=9, textColor=colors.grey,
-                                     alignment=TA_CENTER))
+            # Custom professional styles - compact version
+            styles.add(ParagraphStyle(
+                name="CenteredTitle",
+                alignment=TA_CENTER,
+                fontSize=22,
+                spaceAfter=8,
+                leading=24,
+                textColor=colors.HexColor("#1a1a1a"),
+                fontName="Helvetica-Bold"
+            ))
+            styles.add(ParagraphStyle(
+                name="Subtitle",
+                alignment=TA_CENTER,
+                fontSize=13,
+                spaceAfter=20,
+                leading=16,
+                textColor=colors.HexColor("#555555"),
+                fontName="Helvetica"
+            ))
+            styles.add(ParagraphStyle(
+                name="Justified",
+                alignment=TA_JUSTIFY,
+                fontSize=10,
+                leading=14,
+                spaceAfter=6,
+                fontName="Helvetica"
+            ))
+            styles.add(ParagraphStyle(
+                name="SectionHeader",
+                fontSize=16,
+                leading=18,
+                spaceBefore=14,
+                spaceAfter=8,
+                textColor=colors.HexColor("#1a5490"),
+                fontName="Helvetica-Bold",
+                borderPadding=(0, 0, 6, 0),
+                borderColor=colors.HexColor("#1a5490"),
+                borderWidth=0
+            ))
+            styles.add(ParagraphStyle(
+                name="SubHeader",
+                fontSize=12,
+                leading=14,
+                spaceBefore=8,
+                spaceAfter=6,
+                textColor=colors.HexColor("#2c3e50"),
+                fontName="Helvetica-Bold"
+            ))
+            styles.add(ParagraphStyle(
+                name="Subtle",
+                fontSize=8,
+                textColor=colors.grey,
+                alignment=TA_CENTER,
+                fontName="Helvetica-Oblique"
+            ))
+            styles.add(ParagraphStyle(
+                name="BulletPoint",
+                fontSize=10,
+                leading=13,
+                leftIndent=15,
+                spaceAfter=3,
+                fontName="Helvetica"
+            ))
+            styles.add(ParagraphStyle(
+                name="Highlight",
+                fontSize=11,
+                leading=14,
+                leftIndent=12,
+                rightIndent=12,
+                spaceBefore=6,
+                spaceAfter=6,
+                backColor=colors.HexColor("#f8f9fa"),
+                borderColor=colors.HexColor("#1a5490"),
+                borderWidth=1,
+                borderPadding=8,
+                fontName="Helvetica"
+            ))
             
             metadata = output['metadata']
             sections = output['sections']
@@ -1040,17 +1136,40 @@ Be specific, quantitative, and actionable. Use actual numbers from the data.
             # ======================
             # 1️⃣ TITLE PAGE
             # ======================
-            story.append(Spacer(1, 100))
-            story.append(Paragraph("Machine Learning Analysis Report", styles["CenteredTitle"]))
-            story.append(Spacer(1, 20))
-            story.append(Paragraph(f"<b>Dataset:</b> {metadata['table_name']}", styles["Normal"]))
-            story.append(Spacer(1, 10))
-            story.append(Paragraph(f"<b>Workflow ID:</b> {metadata['workflow_id']}", styles["Normal"]))
-            story.append(Spacer(1, 150))
+            story.append(Spacer(1, 2*inch))
+            story.append(Paragraph("Machine Learning", styles["CenteredTitle"]))
+            story.append(Paragraph("Analysis Report", styles["CenteredTitle"]))
+            story.append(Spacer(1, 0.3*inch))
+            
+            # Centered info box - more compact
+            info_data = [
+                ["Dataset", metadata['table_name']],
+                ["Workflow ID", metadata['workflow_id'][:8] + "..."],
+                ["Models Analyzed", str(len(sections['3_models_performance']['metrics_comparison_table']))],
+            ]
+            
+            info_table = Table(info_data, colWidths=[1.8*inch, 3.2*inch])
+            info_table.setStyle(TableStyle([
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+                ("FONTNAME", (1, 0), (1, -1), "Helvetica"),
+                ("FONTSIZE", (0, 0), (-1, -1), 10),
+                ("TEXTCOLOR", (0, 0), (0, -1), colors.HexColor("#1a5490")),
+                ("GRID", (0, 0), (-1, -1), 1, colors.HexColor("#d0d0d0")),
+                ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#f0f4f8")),
+                ("TOPPADDING", (0, 0), (-1, -1), 8),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+            ]))
+            story.append(info_table)
+            
+            story.append(Spacer(1, 1.2*inch))
             
             gen_date = datetime.fromisoformat(metadata['generated_at']).strftime("%B %d, %Y at %I:%M %p")
+            story.append(Paragraph("─" * 60, styles["Subtle"]))
+            story.append(Spacer(1, 6))
             story.append(Paragraph(f"Generated by {metadata['generator']}", styles["Subtle"]))
-            story.append(Paragraph(f"Date: {gen_date}", styles["Subtle"]))
+            story.append(Paragraph(f"{gen_date}", styles["Subtle"]))
             story.append(PageBreak())
             
             # ======================
@@ -1058,48 +1177,73 @@ Be specific, quantitative, and actionable. Use actual numbers from the data.
             # ======================
             dataset = sections['1_dataset']
             story.append(Paragraph("1. Dataset Overview", styles["SectionHeader"]))
-            story.append(Paragraph(dataset['description'], styles["Justified"]))
-            story.append(Spacer(1, 12))
+            story.append(Spacer(1, 4))
             
-            # Dataset statistics table
+            # Add horizontal line under header
+            story.append(Paragraph("─" * 90, styles["Subtle"]))
+            story.append(Spacer(1, 6))
+            
+            story.append(Paragraph(dataset['description'], styles["Justified"]))
+            story.append(Spacer(1, 10))
+            
+            # Key Statistics highlight box
+            story.append(Paragraph("<b>Key Statistics</b>", styles["SubHeader"]))
+            story.append(Spacer(1, 3))
+            
+            # Dataset statistics table with professional styling - more compact
             stats_data = [["Metric", "Value"]]
             for key, value in dataset['statistics'].items():
                 readable_key = key.replace('_', ' ').title()
                 stats_data.append([readable_key, str(value)])
             
-            stats_table = Table(stats_data, colWidths=[3*inch, 3*inch])
+            stats_table = Table(stats_data, colWidths=[3.4*inch, 3*inch])
             stats_table.setStyle(TableStyle([
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#3498db")),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1a5490")),
                 ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
-                ("ALIGN", (0, 0), (-1, -1), "LEFT"),
-                ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-                ("BOTTOMPADDING", (0, 0), (-1, 0), 10),
-                ("TOPPADDING", (0, 0), (-1, 0), 10),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, 0), 11),
+                ("FONTSIZE", (0, 1), (-1, -1), 9),
+                ("ALIGN", (0, 0), (0, -1), "LEFT"),
+                ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#d0d0d0")),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8f9fa")]),
+                ("TOPPADDING", (0, 0), (-1, -1), 6),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
             ]))
             story.append(stats_table)
-            story.append(Spacer(1, 12))
+            story.append(Spacer(1, 10))
             
-            # Column summary table (limited to fit)
+            # Column summary table (limited to fit) - compact
             if dataset['column_summary_table']:
-                story.append(Paragraph("Column Summary (Top 10)", styles["SubHeader"]))
+                story.append(Paragraph("<b>Column Details</b>", styles["SubHeader"]))
+                story.append(Spacer(1, 3))
                 col_data = [["Column", "Type", "Null %", "Unique", "Mean"]]
                 for col in dataset['column_summary_table'][:10]:
                     col_data.append([
-                        col['Column'][:20],  # Truncate long names
-                        col['Type'],
+                        col['Column'][:16],  # Truncate long names
+                        col['Type'][:10],
                         col['Null %'],
                         str(col['Unique Values']),
                         str(col['Mean'])[:8]
                     ])
                 
-                col_table = Table(col_data, colWidths=[1.5*inch, 1*inch, 0.8*inch, 0.8*inch, 1*inch])
+                col_table = Table(col_data, colWidths=[1.7*inch, 1.1*inch, 0.75*inch, 0.8*inch, 0.95*inch])
                 col_table.setStyle(TableStyle([
-                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2ecc71")),
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2c7a7b")),
                     ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
-                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-                    ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-                    ("FONTSIZE", (0, 0), (-1, -1), 9),
-                    ("BOTTOMPADDING", (0, 0), (-1, 0), 8),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("FONTSIZE", (0, 0), (-1, 0), 9),
+                    ("ALIGN", (0, 0), (0, -1), "LEFT"),
+                    ("ALIGN", (1, 0), (-1, -1), "CENTER"),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#d0d0d0")),
+                    ("FONTSIZE", (0, 1), (-1, -1), 8),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f0fdf4")]),
+                    ("TOPPADDING", (0, 0), (-1, -1), 5),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
                 ]))
                 story.append(col_table)
             
@@ -1110,14 +1254,22 @@ Be specific, quantitative, and actionable. Use actual numbers from the data.
             # ======================
             preprocessing = sections['2_data_preprocessing']
             story.append(Paragraph("2. Data Preprocessing", styles["SectionHeader"]))
+            story.append(Spacer(1, 4))
+            story.append(Paragraph("─" * 90, styles["Subtle"]))
+            story.append(Spacer(1, 6))
+            
             story.append(Paragraph(preprocessing['description'], styles["Justified"]))
-            story.append(Spacer(1, 12))
+            story.append(Spacer(1, 10))
             
             if preprocessing['preprocessing_steps']:
-                story.append(Paragraph("Preprocessing Steps:", styles["SubHeader"]))
-                for step in preprocessing['preprocessing_steps']:
-                    story.append(Paragraph(f"<b>{step['step']}:</b> {step['description']}", styles["Normal"]))
-                    story.append(Spacer(1, 6))
+                story.append(Paragraph("<b>Preprocessing Pipeline</b>", styles["SubHeader"]))
+                story.append(Spacer(1, 3))
+                
+                for i, step in enumerate(preprocessing['preprocessing_steps'], 1):
+                    # Add step number and description - compact
+                    step_text = f"<b>Step {i}: {step['step']}</b><br/>{step['description']}"
+                    story.append(Paragraph(step_text, styles["BulletPoint"]))
+                    story.append(Spacer(1, 4))
             
             story.append(PageBreak())
             
@@ -1126,11 +1278,26 @@ Be specific, quantitative, and actionable. Use actual numbers from the data.
             # ======================
             performance = sections['3_models_performance']
             story.append(Paragraph("3. Models Performance Summary", styles["SectionHeader"]))
-            story.append(Paragraph(performance['description'], styles["Justified"]))
-            story.append(Spacer(1, 12))
+            story.append(Spacer(1, 4))
+            story.append(Paragraph("─" * 90, styles["Subtle"]))
+            story.append(Spacer(1, 6))
             
-            # Metrics comparison table
+            story.append(Paragraph(performance['description'], styles["Justified"]))
+            story.append(Spacer(1, 10))
+            
+            # Best model highlight box - compact
+            if performance.get('best_model'):
+                best = performance['best_model']
+                highlight_text = f"""<b>Best Model: {best['name']}</b><br/>
+                Accuracy: {best['accuracy']} | Precision: {best['precision']} | Recall: {best['recall']} | F1: {best['f1_score']} | ROC-AUC: {best['roc_auc']}"""
+                story.append(Paragraph(highlight_text, styles["Highlight"]))
+                story.append(Spacer(1, 10))
+            
+            # Metrics comparison table - compact
             if performance['metrics_comparison_table']:
+                story.append(Paragraph("<b>Performance Metrics Comparison</b>", styles["SubHeader"]))
+                story.append(Spacer(1, 3))
+                
                 metrics_data = [["Model", "Accuracy", "Precision", "Recall", "F1-Score", "ROC-AUC"]]
                 for row in performance['metrics_comparison_table']:
                     metrics_data.append([
@@ -1142,37 +1309,51 @@ Be specific, quantitative, and actionable. Use actual numbers from the data.
                         row['ROC-AUC']
                     ])
                 
-                metrics_table = Table(metrics_data, colWidths=[1.2*inch]*6)
+                metrics_table = Table(metrics_data, colWidths=[1.4*inch, 1.05*inch, 1.05*inch, 0.95*inch, 1.0*inch, 0.95*inch])
                 metrics_table.setStyle(TableStyle([
-                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e74c3c")),
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#c53030")),
                     ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
-                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-                    ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-                    ("FONTSIZE", (0, 0), (-1, -1), 9),
-                    ("BOTTOMPADDING", (0, 0), (-1, 0), 8),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("FONTSIZE", (0, 0), (-1, 0), 9),
+                    ("ALIGN", (0, 0), (0, -1), "LEFT"),
+                    ("ALIGN", (1, 0), (-1, -1), "CENTER"),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#d0d0d0")),
+                    ("FONTSIZE", (0, 1), (-1, -1), 8),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#fff5f5")]),
+                    ("TOPPADDING", (0, 0), (-1, -1), 5),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
                 ]))
                 story.append(metrics_table)
-                story.append(Spacer(1, 12))
+                story.append(Spacer(1, 10))
             
-            # Model comparison chart
+            # Model comparison chart - slightly smaller
             if performance['visualizations'].get('model_comparison_chart'):
-                story.append(Paragraph("Model Performance Comparison", styles["SubHeader"]))
+                story.append(Paragraph("<b>Visual Performance Comparison</b>", styles["SubHeader"]))
+                story.append(Spacer(1, 3))
                 img_data = base64.b64decode(performance['visualizations']['model_comparison_chart'])
                 img_buffer = io.BytesIO(img_data)
-                story.append(RLImage(img_buffer, width=5*inch, height=3*inch))
-                story.append(Spacer(1, 12))
+                story.append(RLImage(img_buffer, width=5.2*inch, height=3*inch))
+                story.append(Spacer(1, 8))
             
             story.append(PageBreak())
             
-            # Confusion matrices (one per page if multiple)
-            if performance['visualizations'].get('confusion_matrices'):
+            # Confusion matrices - Only for classification, compact
+            if performance['visualizations'].get('confusion_matrices') and len(performance['visualizations']['confusion_matrices']) > 0:
                 story.append(Paragraph("Confusion Matrices", styles["SectionHeader"]))
+                story.append(Spacer(1, 4))
+                story.append(Paragraph("─" * 90, styles["Subtle"]))
+                story.append(Spacer(1, 6))
+                story.append(Paragraph("Classification model performance evaluation matrices showing predicted vs. actual labels.", styles["Justified"]))
+                story.append(Spacer(1, 10))
+                
                 for model_name, cm_base64 in performance['visualizations']['confusion_matrices'].items():
-                    story.append(Paragraph(f"{model_name}", styles["SubHeader"]))
+                    story.append(Paragraph(f"<b>{model_name}</b>", styles["SubHeader"]))
+                    story.append(Spacer(1, 3))
                     img_data = base64.b64decode(cm_base64)
                     img_buffer = io.BytesIO(img_data)
-                    story.append(RLImage(img_buffer, width=4.5*inch, height=3.5*inch))
-                    story.append(Spacer(1, 12))
+                    story.append(RLImage(img_buffer, width=4.5*inch, height=3.4*inch))
+                    story.append(Spacer(1, 10))
                 
                 story.append(PageBreak())
             
@@ -1181,40 +1362,56 @@ Be specific, quantitative, and actionable. Use actual numbers from the data.
             # ======================
             explainability = sections['4_model_explainability']
             story.append(Paragraph("4. Model Explainability", styles["SectionHeader"]))
-            story.append(Paragraph(explainability['description'], styles["Justified"]))
-            story.append(Spacer(1, 12))
+            story.append(Spacer(1, 4))
+            story.append(Paragraph("─" * 90, styles["Subtle"]))
+            story.append(Spacer(1, 6))
             
-            # Feature importance visualizations
+            story.append(Paragraph(explainability['description'], styles["Justified"]))
+            story.append(Spacer(1, 10))
+            
+            # Feature importance visualizations - compact
             if explainability['visualizations']:
                 for model_name, fi_base64 in explainability['visualizations'].items():
-                    story.append(Paragraph(f"Feature Importance - {model_name}", styles["SubHeader"]))
+                    story.append(Paragraph(f"<b>{model_name} - Feature Importance</b>", styles["SubHeader"]))
+                    story.append(Spacer(1, 3))
                     img_data = base64.b64decode(fi_base64)
                     img_buffer = io.BytesIO(img_data)
-                    story.append(RLImage(img_buffer, width=5*inch, height=3*inch))
-                    story.append(Spacer(1, 12))
+                    story.append(RLImage(img_buffer, width=5.2*inch, height=3*inch))
+                    story.append(Spacer(1, 8))
                 
                 story.append(PageBreak())
             
-            # Feature importance tables
+            # Feature importance tables - compact
             if explainability['feature_importance']:
-                story.append(Paragraph("Feature Importance Rankings", styles["SubHeader"]))
+                story.append(Paragraph("<b>Feature Importance Rankings (Top 5)</b>", styles["SubHeader"]))
+                story.append(Spacer(1, 4))
+                
                 for model_name, features in explainability['feature_importance'].items():
-                    story.append(Paragraph(f"<b>{model_name}:</b>", styles["Normal"]))
+                    story.append(Paragraph(f"<b>{model_name}</b>", styles["Normal"]))
+                    story.append(Spacer(1, 2))
+                    
                     fi_data = [["Rank", "Feature", "Importance"]]
                     for feat in features[:5]:  # Top 5
-                        fi_data.append([str(feat['rank']), feat['feature'][:30], feat['importance']])
+                        fi_data.append([str(feat['rank']), feat['feature'][:26], feat['importance']])
                     
-                    fi_table = Table(fi_data, colWidths=[0.8*inch, 3*inch, 1.5*inch])
+                    fi_table = Table(fi_data, colWidths=[0.7*inch, 3.3*inch, 1.4*inch])
                     fi_table.setStyle(TableStyle([
-                        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#9b59b6")),
+                        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#7c3aed")),
                         ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+                        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                        ("FONTSIZE", (0, 0), (-1, 0), 9),
                         ("ALIGN", (0, 0), (0, -1), "CENTER"),
-                        ("ALIGN", (1, 0), (-1, -1), "LEFT"),
-                        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-                        ("FONTSIZE", (0, 0), (-1, -1), 9),
+                        ("ALIGN", (1, 0), (1, -1), "LEFT"),
+                        ("ALIGN", (2, 0), (2, -1), "CENTER"),
+                        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#d0d0d0")),
+                        ("FONTSIZE", (0, 1), (-1, -1), 8),
+                        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#faf5ff")]),
+                        ("TOPPADDING", (0, 0), (-1, -1), 5),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
                     ]))
                     story.append(fi_table)
-                    story.append(Spacer(1, 10))
+                    story.append(Spacer(1, 8))
                 
                 story.append(PageBreak())
             
@@ -1223,29 +1420,42 @@ Be specific, quantitative, and actionable. Use actual numbers from the data.
             # ======================
             conclusion = sections['5_conclusion']
             story.append(Paragraph("5. Conclusion", styles["SectionHeader"]))
+            story.append(Spacer(1, 4))
+            story.append(Paragraph("─" * 90, styles["Subtle"]))
+            story.append(Spacer(1, 6))
+            
             story.append(Paragraph(conclusion['summary'], styles["Justified"]))
             story.append(Spacer(1, 12))
             
-            story.append(Paragraph("Key Findings:", styles["SubHeader"]))
-            for finding in conclusion['key_findings']:
-                story.append(Paragraph(f"• {finding}", styles["Normal"]))
-                story.append(Spacer(1, 4))
-            story.append(Spacer(1, 12))
+            # Key Findings - compact
+            story.append(Paragraph("<b>Key Findings</b>", styles["SubHeader"]))
+            story.append(Spacer(1, 4))
+            for i, finding in enumerate(conclusion['key_findings'], 1):
+                story.append(Paragraph(f"<b>{i}.</b> {finding}", styles["BulletPoint"]))
+                story.append(Spacer(1, 3))
+            story.append(Spacer(1, 10))
             
-            story.append(Paragraph("Recommendations:", styles["SubHeader"]))
-            for rec in conclusion['recommendations'][:5]:  # Top 5
-                story.append(Paragraph(f"• {rec}", styles["Normal"]))
-                story.append(Spacer(1, 4))
-            story.append(Spacer(1, 12))
+            # Recommendations - compact
+            story.append(Paragraph("<b>Recommendations</b>", styles["SubHeader"]))
+            story.append(Spacer(1, 4))
+            for i, rec in enumerate(conclusion['recommendations'][:5], 1):  # Top 5
+                story.append(Paragraph(f"<b>{i}.</b> {rec}", styles["BulletPoint"]))
+                story.append(Spacer(1, 3))
+            story.append(Spacer(1, 10))
             
-            story.append(Paragraph("Next Steps:", styles["SubHeader"]))
-            for step in conclusion['next_steps']:
-                story.append(Paragraph(f"• {step}", styles["Normal"]))
-                story.append(Spacer(1, 4))
+            # Next Steps - compact
+            story.append(Paragraph("<b>Next Steps</b>", styles["SubHeader"]))
+            story.append(Spacer(1, 4))
+            for i, step in enumerate(conclusion['next_steps'], 1):
+                story.append(Paragraph(f"<b>{i}.</b> {step}", styles["BulletPoint"]))
+                story.append(Spacer(1, 3))
             
-            story.append(Spacer(1, 40))
-            story.append(Paragraph("─" * 80, styles["Subtle"]))
-            story.append(Paragraph("End of Report", styles["Subtle"]))
+            story.append(Spacer(1, 30))
+            story.append(Paragraph("─" * 90, styles["Subtle"]))
+            story.append(Spacer(1, 6))
+            story.append(Paragraph("<i>End of Report</i>", styles["Subtle"]))
+            story.append(Spacer(1, 4))
+            story.append(Paragraph(f"<i>Generated on {datetime.now().strftime('%B %d, %Y')}</i>", styles["Subtle"]))
             
             # Build PDF
             doc.build(story)
