@@ -300,3 +300,5 @@ output/
 results/
 
 backend/services/__pycache__/workflow_manager.cpython-312.pyc
+
+backend/test_results/

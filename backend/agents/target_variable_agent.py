@@ -35,7 +35,26 @@ class TargetVariableAgent:
             raise ValueError("GEMINI_API_KEY must be provided or set in environment")
         
         genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel('gemini-pro')
+        # Use the correct model name for the current API
+        # Try models in order of preference
+        model_names = [
+            'gemini-1.5-flash-001',  # Specific version
+            'gemini-1.5-pro-001',    # Pro version
+            'gemini-pro',            # Original stable
+        ]
+        
+        self.model = None
+        for model_name in model_names:
+            try:
+                self.model = genai.GenerativeModel(model_name)
+                print(f"✅ Using Gemini model: {model_name}")
+                break
+            except Exception as e:
+                print(f"⚠️ Model {model_name} not available: {e}")
+                continue
+        
+        if self.model is None:
+            raise ValueError("No Gemini models available. Check your API key and model access.")
         
         # Initialize workflow manager
         self.workflow_manager = None
@@ -220,7 +239,9 @@ class TargetVariableAgent:
         ])
         
         prompt = f"""
-You are a machine learning expert analyzing a dataset to identify and rank the MOST IMPORTANT target variables for predictive modeling.
+You are a machine learning expert analyzing a dataset to identify the PRIMARY TARGET VARIABLE (outcome/label) for predictive modeling.
+
+CRITICAL: A target variable is what you want to PREDICT (the outcome/result), NOT what you use to make the prediction (the features/inputs).
 
 Dataset Overview:
 - Total rows: {data_profile['total_rows']}
@@ -229,16 +250,27 @@ Dataset Overview:
 Columns:
 {columns_info}
 
-TASK: Identify the most important target variables ranked by their importance for machine learning.
+TASK: Identify the PRIMARY TARGET VARIABLES (outcomes/labels to predict) ranked by importance.
 
-Consider these factors when ranking importance:
-1. Business/Analytical Value: Which variables would provide the most valuable predictions?
-2. Data Quality: Low null percentages, appropriate cardinality
-3. Predictability: Sufficient features available to predict this target
+IMPORTANT DISTINCTIONS:
+- TARGET variables: Outcomes, diagnoses, results, labels (e.g., "diagnosed_diabetes", "churn", "sales_total")
+- FEATURE variables: Inputs used for prediction (e.g., "age", "bmi", "temperature", "date")
+
+For a DIABETES dataset: 
+- TARGET: "diagnosed_diabetes" (the outcome we want to predict) ✓
+- FEATURES: "age", "bmi", "glucose_level", "family_history" (inputs for prediction) ✗
+
+For a SALES dataset:
+- TARGET: "total_revenue", "sales_count" (the outcome we want to predict) ✓
+- FEATURES: "date", "product_category", "price" (inputs for prediction) ✗
+
+Consider these factors when ranking:
+1. Is this an OUTCOME/RESULT (target) or an INPUT/MEASUREMENT (feature)?
+2. Business Value: Which outcome would be most valuable to predict?
+3. Data Quality: Low nulls, appropriate cardinality
 4. Problem Clarity: Clear regression or classification task
-5. Actionability: Predictions that can drive decisions
 
-Please provide the TOP 5 most important target variables, RANKED FROM MOST TO LEAST IMPORTANT.
+Please provide the TOP 5 TARGET VARIABLES (outcomes to predict), RANKED FROM MOST TO LEAST IMPORTANT.
 
 For each recommendation, provide:
 - Importance Score (1-100): How important this target is for ML modeling
@@ -401,55 +433,41 @@ RANKING RATIONALE:
     
     def _get_fallback_suggestions(self, data_profile: Dict) -> List[Dict]:
         """
-        Provide basic suggestions with importance ranking if Gemini API fails
+        Simple fallback if LLM fails: Just suggest the LAST few columns
+        (Most datasets put target variables at the end by convention)
         """
         suggestions = []
         
-        for col in data_profile['columns']:
-            # Calculate a basic importance score based on data quality
-            importance = 50  # Base score
-            
-            # Reduce score for high null percentage
-            if col['null_percentage'] < 5:
-                importance += 20
-            elif col['null_percentage'] < 20:
-                importance += 10
-            elif col['null_percentage'] > 50:
-                importance -= 20
-            
-            # Look for numeric columns with reasonable cardinality for regression
-            if 'int' in col['dtype'] or 'float' in col['dtype']:
-                if col['distinct_count'] > 10:  # Continuous variable
-                    importance += 15
-                    suggestions.append({
-                        'rank': 0,  # Will be assigned later
-                        'variable': col['name'],
-                        'importance_score': min(100, importance),
-                        'problem_type': 'regression',
-                        'why_important': 'Numeric column with high cardinality and good data quality - suitable for regression',
-                        'predictability': 'MEDIUM',
-                        'suggested_features': [c['name'] for c in data_profile['columns'] if c['name'] != col['name']][:5],
-                        'considerations': f'{col["null_percentage"]}% null values - may need imputation'
-                    })
-                elif col['distinct_count'] <= 10 and col['distinct_count'] > 1:  # Could be classification
-                    importance += 10
-                    suggestions.append({
-                        'rank': 0,
-                        'variable': col['name'],
-                        'importance_score': min(100, importance),
-                        'problem_type': f'{"binary" if col["distinct_count"] == 2 else "multi-class"} classification',
-                        'why_important': f'Categorical variable with {col["distinct_count"]} classes - suitable for classification',
-                        'predictability': 'MEDIUM',
-                        'suggested_features': [c['name'] for c in data_profile['columns'] if c['name'] != col['name']][:5],
-                        'considerations': f'{col["null_percentage"]}% null values'
-                    })
+        # Get last 5 columns as candidates (reversed so last column is first)
+        candidates = list(reversed(data_profile['columns'][-5:]))
         
-        # Sort by importance score and assign ranks
-        suggestions.sort(key=lambda x: x['importance_score'], reverse=True)
-        for i, sug in enumerate(suggestions[:5], 1):
-            sug['rank'] = i
+        for i, col in enumerate(candidates, 1):
+            # Skip non-numeric columns for simplicity
+            if not ('int' in col['dtype'] or 'float' in col['dtype']):
+                continue
+            
+            # Skip if only 1 unique value (constant)
+            if col['distinct_count'] <= 1:
+                continue
+            
+            # Determine problem type based on cardinality
+            if 2 <= col['distinct_count'] <= 10:
+                problem_type = f'{"binary" if col["distinct_count"] == 2 else "multi-class"} classification'
+            else:
+                problem_type = 'regression'
+            
+            suggestions.append({
+                'rank': i,
+                'variable': col['name'],
+                'importance_score': 100 - (i * 5),  # Simple: first=100, second=95, etc.
+                'problem_type': problem_type,
+                'why_important': f'Located near end of dataset (common target position). {col["distinct_count"]} unique values.',
+                'predictability': 'UNKNOWN - LLM analysis recommended',
+                'suggested_features': [c['name'] for c in data_profile['columns'] if c['name'] != col['name']][:6],
+                'considerations': 'Simple fallback suggestion. Use LLM analysis for accurate recommendations.'
+            })
         
-        return suggestions[:5]  # Return top 5
+        return suggestions[:5]
 
 
 # ============================================
