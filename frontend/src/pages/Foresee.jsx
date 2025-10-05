@@ -10,7 +10,7 @@ function Foresee() {
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef(null);
 
-  // ✅ STAGES: upload → loading → fadingOut → success
+  // ✅ STAGES: upload → loading → fadingOut → success → modelLoading → modelReady
   const [stage, setStage] = useState("upload");
 
   // ✅ Success header swap + modal
@@ -26,7 +26,10 @@ function Foresee() {
   const [selectedTarget, setSelectedTarget] = useState(null);
   const [savingTarget, setSavingTarget] = useState(false);
 
-  // Rotating loading messages
+  // ✅ Fade out entire success section after target selection
+  const [fadeAllOut, setFadeAllOut] = useState(false);
+
+  // Rotating loading messages (upload)
   const loadingMessages = [
     "Loading your data...",
     "Preparing for analysis...",
@@ -40,6 +43,30 @@ function Foresee() {
   const [prevMsgIdx, setPrevMsgIdx] = useState(null);
   const MESSAGE_FADE_TIME = 250; // 0.25s fade
 
+  // ✅ Model-building loading messages (after target selection)
+  const modelMessages = [
+    "Training regression models…",
+    "Evaluating feature importance…",
+    "Optimizing hyperparameters…",
+    "Computing accuracy and error metrics…",
+    "Finalizing your insights report…"
+  ];
+  const [modelMsgIdx, setModelMsgIdx] = useState(0);
+  const [modelPrevMsgIdx, setModelPrevMsgIdx] = useState(null);
+
+  // timers cleanup
+  const timersRef = useRef([]);
+
+  const pushTimer = (id) => {
+    timersRef.current.push(id);
+  };
+  const clearAllTimers = () => {
+    timersRef.current.forEach(clearTimeout);
+    timersRef.current = [];
+  };
+
+  useEffect(() => () => clearAllTimers(), []);
+
   // ✅ Define fetchTargetSuggestions with useCallback before it's used
   const fetchTargetSuggestions = useCallback(async () => {
     if (!result?.workflow?.id || !result?.upload?.table_name) {
@@ -51,7 +78,9 @@ function Foresee() {
     setTargetError(null);
 
     try {
-      console.log(`🎯 Fetching target suggestions for workflow: ${result.workflow.id}, table: ${result.upload.table_name}`);
+      console.log(
+        `🎯 Fetching target suggestions for workflow: ${result.workflow.id}, table: ${result.upload.table_name}`
+      );
       const response = await fetch(
         `${API_BASE_URL}/target-suggestions/${result.workflow.id}/${result.upload.table_name}`
       );
@@ -76,19 +105,18 @@ function Foresee() {
     }
   }, [result]);
 
-  // ✅ Fixed non-overlapping fade logic for loading messages
+  // ✅ Fixed non-overlapping fade logic for loading messages (upload phase)
   useEffect(() => {
     if (stage !== "loading") return;
 
     const interval = setInterval(() => {
       setPrevMsgIdx(activeMsgIdx); // start fade-out of current
 
-      setTimeout(() => {
-        setActiveMsgIdx((cur) =>
-          cur < loadingMessages.length - 1 ? cur + 1 : cur
-        );
+      const t = setTimeout(() => {
+        setActiveMsgIdx((cur) => (cur < loadingMessages.length - 1 ? cur + 1 : cur));
         setPrevMsgIdx(null); // remove old message completely
       }, MESSAGE_FADE_TIME);
+      pushTimer(t);
     }, 2000);
 
     return () => clearInterval(interval);
@@ -101,19 +129,16 @@ function Foresee() {
       // Fetch target variable suggestions
       fetchTargetSuggestions();
 
-      const startFade = setTimeout(() => {
+      const t1 = setTimeout(() => {
         setSuccessHeaderFading(true); // apply fade-out class
       }, 2000); // show for 2s
+      pushTimer(t1);
 
-      const swapToTargets = setTimeout(() => {
-        setShowSuccessHeader(false);  // unmount header
-        setStageAfterSuccess(true);   // show target selection
-      }, 2000 + 400); // 400ms matches .fade-out duration below
-
-      return () => {
-        clearTimeout(startFade);
-        clearTimeout(swapToTargets);
-      };
+      const t2 = setTimeout(() => {
+        setShowSuccessHeader(false); // unmount header
+        setStageAfterSuccess(true); // show target selection
+      }, 2400); // 400ms matches fade-out duration
+      pushTimer(t2);
     }
   }, [stage, result, fetchTargetSuggestions]);
 
@@ -151,6 +176,7 @@ function Foresee() {
     }
   };
 
+  // ✅ After selecting a target: keep banner, then fade everything out after 2s → show model loader → 10s → final screen
   const handleSelectTarget = async (suggestion) => {
     if (!result?.workflow?.id || !result?.upload?.table_name) {
       setError("Missing workflow information");
@@ -162,7 +188,7 @@ function Foresee() {
 
     try {
       console.log(`💾 Saving target selection: ${suggestion.variable}`);
-      
+
       const response = await fetch(
         `${API_BASE_URL}/workflow/${result.workflow.id}/select-target`,
         {
@@ -184,11 +210,48 @@ function Foresee() {
       if (response.ok) {
         setSelectedTarget(suggestion.variable);
         console.log("✅ Target variable saved:", data);
-        
-        // Show success message for 2 seconds
-        setTimeout(() => {
-          alert(`Target variable "${suggestion.variable}" saved successfully! Ready for model training.`);
-        }, 100);
+
+        // ✅ 2s later: fade out all success content
+        const t1 = setTimeout(() => {
+          setFadeAllOut(true);
+        }, 2000);
+        pushTimer(t1);
+
+        // After fade (0.4s), switch to modelLoading
+        const t2 = setTimeout(() => {
+          setStage("modelLoading");
+          setFadeAllOut(false); // reset for future runs
+          setModelMsgIdx(0);
+          setModelPrevMsgIdx(null);
+        }, 2000 + 400);
+        pushTimer(t2);
+
+        // ✅ Model loader runs for 10 seconds with rotating messages
+        const msgInterval = setInterval(() => {
+          setModelPrevMsgIdx((prev) => (prev === null ? 0 : modelMsgIdx));
+          setModelPrevMsgIdx(modelMsgIdx);
+          const t = setTimeout(() => {
+            setModelMsgIdx((cur) => (cur < modelMessages.length - 1 ? cur + 1 : 0));
+            setModelPrevMsgIdx(null);
+          }, MESSAGE_FADE_TIME);
+          pushTimer(t);
+        }, 2000);
+
+        // stop the interval when we leave modelLoading
+        const stopInterval = () => clearInterval(msgInterval);
+
+        // After 10 seconds: fade out loader → show modelReady
+        const t3 = setTimeout(() => {
+          stopInterval();
+          setFadeAllOut(true);
+        }, 10000);
+        pushTimer(t3);
+
+        const t4 = setTimeout(() => {
+          setStage("modelReady");
+          setFadeAllOut(false);
+        }, 10000 + 400);
+        pushTimer(t4);
       } else {
         setTargetError(data.error || "Failed to save target selection");
         console.error("❌ Target selection error:", data.error);
@@ -236,13 +299,14 @@ function Foresee() {
 
         // ✅ Fade out the upload section first, then show success
         setStage("fadingOut");
-        setTimeout(() => {
+        const t = setTimeout(() => {
           // Reset success header states each time we arrive here
           setShowSuccessHeader(true);
           setSuccessHeaderFading(false);
           setStageAfterSuccess(false);
           setStage("success");
         }, 500); // 0.5s fadeOut you chose
+        pushTimer(t);
       } else {
         setError(data.error || "Upload failed");
         setStage("upload");
@@ -262,6 +326,19 @@ function Foresee() {
     }
   };
 
+  // Report handlers (adjust endpoints as needed)
+  const handleViewReport = () => {
+    if (!result?.workflow?.id) return;
+    // open a view endpoint in a new tab
+    window.open(`${API_BASE_URL}/workflow/${result.workflow.id}/report/view`, "_blank");
+  };
+
+  const handleDownloadReport = () => {
+    if (!result?.workflow?.id) return;
+    // trigger a file download
+    window.location.href = `${API_BASE_URL}/workflow/${result.workflow.id}/report/download`;
+  };
+
   return (
     <div className="font-poppin pt-48">
       {/* ✅ Keyframes and classes */}
@@ -271,13 +348,11 @@ function Foresee() {
           0% { opacity: 0; transform: translateY(8px); }
           100% { opacity: 1; transform: translateY(0); }
         }
-
         /* Message fade out */
         @keyframes fadeOutMessage {
           0% { opacity: 1; transform: translateY(0); }
           100% { opacity: 0; transform: translateY(-8px); }
         }
-
         .msg-in { animation: fadeInMessage 0.25s ease forwards; }
         .msg-out { animation: fadeOutMessage 0.25s ease forwards; }
 
@@ -436,12 +511,10 @@ function Foresee() {
                 )}
               </div>
 
-              {/* ✅ Loading Overlay */}
+              {/* ✅ Loading Overlay (upload) */}
               <div
                 className={`absolute inset-0 transition-opacity duration-300 flex items-center justify-center ${
-                  stage === "loading"
-                    ? "opacity-100"
-                    : "opacity-0 pointer-events-none"
+                  stage === "loading" ? "opacity-100" : "opacity-0 pointer-events-none"
                 }`}
               >
                 <div className="w-full">
@@ -493,7 +566,7 @@ function Foresee() {
 
       {/* ✅ Success Section */}
       {stage === "success" && result && (
-        <section className="w-full bg-[#EEEDE9] py-0">
+        <section className={`w-full bg-[#EEEDE9] py-0 transition-all duration-400 ${fadeAllOut ? "opacity-0 -translate-y-3" : "opacity-100 translate-y-0"}`}>
           <div className="max-w-6xl mx-auto px-8">
             {/* ✅ Success header auto-fades out after 2s, then swaps to target selection */}
             {showSuccessHeader && (
@@ -572,63 +645,83 @@ function Foresee() {
                   </div>
                 )}
 
-                <div className="flex flex-col sm:flex-row gap-4 justify-center">
-                  {targetSuggestions.length >= 1 && (
-                    <button 
-                      onClick={() => handleSelectTarget(targetSuggestions[0])}
-                      disabled={savingTarget || selectedTarget === targetSuggestions[0].variable}
-                      className={`px-6 py-3 rounded-lg transition ${
-                        selectedTarget === targetSuggestions[0].variable
-                          ? 'bg-green-600 text-white'
-                          : 'bg-blue-600 text-white hover:bg-blue-700'
-                      } disabled:opacity-50 disabled:cursor-not-allowed`}
-                    >
-                      <div className="flex flex-col items-start">
-                        <span className="font-semibold">{targetSuggestions[0].variable}</span>
-                        <span className="text-xs opacity-80">{targetSuggestions[0].problem_type}</span>
-                      </div>
-                    </button>
-                  )}
-                  {targetSuggestions.length >= 2 && (
-                    <button 
-                      onClick={() => handleSelectTarget(targetSuggestions[1])}
-                      disabled={savingTarget || selectedTarget === targetSuggestions[1].variable}
-                      className={`px-6 py-3 rounded-lg transition ${
-                        selectedTarget === targetSuggestions[1].variable
-                          ? 'bg-green-600 text-white'
-                          : 'bg-blue-600 text-white hover:bg-blue-700'
-                      } disabled:opacity-50 disabled:cursor-not-allowed`}
-                    >
-                      <div className="flex flex-col items-start">
-                        <span className="font-semibold">{targetSuggestions[1].variable}</span>
-                        <span className="text-xs opacity-80">{targetSuggestions[1].problem_type}</span>
-                      </div>
-                    </button>
-                  )}
-                  {targetSuggestions.length >= 3 && (
-                    <button 
-                      onClick={() => handleSelectTarget(targetSuggestions[2])}
-                      disabled={savingTarget || selectedTarget === targetSuggestions[2].variable}
-                      className={`px-6 py-3 rounded-lg transition ${
-                        selectedTarget === targetSuggestions[2].variable
-                          ? 'bg-green-600 text-white'
-                          : 'bg-blue-600 text-white hover:bg-blue-700'
-                      } disabled:opacity-50 disabled:cursor-not-allowed`}
-                    >
-                      <div className="flex flex-col items-start">
-                        <span className="font-semibold">{targetSuggestions[2].variable}</span>
-                        <span className="text-xs opacity-80">{targetSuggestions[2].problem_type}</span>
-                      </div>
-                    </button>
-                  )}
+                {/* ✅ Podium-style target buttons */}
+                <div className="flex flex-col items-center mt-6 gap-4">
+                  <div className="flex items-end justify-center gap-4">
+                    {/* Silver */}
+                    {targetSuggestions.length >= 2 && (
+                      <button
+                        onClick={() => handleSelectTarget(targetSuggestions[1])}
+                        disabled={savingTarget || selectedTarget === targetSuggestions[1].variable}
+                        className={`px-8 py-4 rounded-lg transition transform ${
+                          selectedTarget === targetSuggestions[1].variable
+                            ? 'bg-green-600 text-white'
+                            : 'bg-gray-300 text-black hover:bg-gray-400'
+                        } disabled:opacity-50 disabled:cursor-not-allowed scale-90`}
+                      >
+                        <div className="flex flex-col items-center">
+                          <span className="font-semibold">{targetSuggestions[1].variable}</span>
+                          <span className="text-xs opacity-80">{targetSuggestions[1].problem_type}</span>
+                        </div>
+                      </button>
+                    )}
+                    {/* Gold */}
+                    {targetSuggestions.length >= 1 && (
+                      <button
+                        onClick={() => handleSelectTarget(targetSuggestions[0])}
+                        disabled={savingTarget || selectedTarget === targetSuggestions[0].variable}
+                        className={`px-12 py-6 rounded-lg transition transform ${
+                          selectedTarget === targetSuggestions[0].variable
+                            ? 'bg-green-600 text-white'
+                            : 'bg-yellow-500 text-black hover:bg-yellow-600'
+                        } disabled:opacity-50 disabled:cursor-not-allowed scale-110`}
+                      >
+                        <div className="flex flex-col items-center">
+                          <span className="font-bold">{targetSuggestions[0].variable}</span>
+                          <span className="text-xs opacity-80">{targetSuggestions[0].problem_type}</span>
+                        </div>
+                      </button>
+                    )}
+                    {/* Bronze */}
+                    {targetSuggestions.length >= 3 && (
+                      <button
+                        onClick={() => handleSelectTarget(targetSuggestions[2])}
+                        disabled={savingTarget || selectedTarget === targetSuggestions[2].variable}
+                        className={`px-8 py-4 rounded-lg transition transform ${
+                          selectedTarget === targetSuggestions[2].variable
+                            ? 'bg-green-600 text-white'
+                            : 'bg-amber-700 text-white hover:bg-amber-800'
+                        } disabled:opacity-50 disabled:cursor-not-allowed scale-90`}
+                      >
+                        <div className="flex flex-col items-center">
+                          <span className="font-semibold">{targetSuggestions[2].variable}</span>
+                          <span className="text-xs opacity-80">{targetSuggestions[2].problem_type}</span>
+                        </div>
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Other options */}
                   {targetSuggestions.length > 3 && (
                     <button
-                      onClick={() => setShowModal(true)}
-                      className="px-6 py-3 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition"
+                      onClick={() => {
+                        if (!savingTarget && !selectedTarget) {
+                          setShowModal(true);
+                        }
+                      }}
+                      disabled={savingTarget || selectedTarget !== null}
+                     className={`px-6 py-3 rounded-lg transition font-semibold ${
+                      savingTarget || selectedTarget !== null
+                        ? "bg-gray-400 text-white opacity-50 cursor-not-allowed"
+                        : "bg-gray-700 text-white hover:bg-gray-600"
+                    }`}
+
                     >
                       Other Options ({targetSuggestions.length - 3} more)
                     </button>
                   )}
+
+                  {/* If no recommendations yet */}
                   {targetSuggestions.length === 0 && !loadingTargets && (
                     <button
                       onClick={() => setShowModal(true)}
@@ -641,7 +734,7 @@ function Foresee() {
               </div>
             )}
 
-            {/* ✅ Your existing success details remain unchanged */}
+            {/* ✅ Success details */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
               <div className="bg-white rounded-xl p-6 shadow-lg">
                 <div className="text-sm text-gray-600 mb-2">Workflow ID</div>
@@ -723,6 +816,108 @@ function Foresee() {
         </section>
       )}
 
+      {/* ✅ Model Loading Screen */}
+      {stage === "modelLoading" && (
+        <section className={`w-full bg-[#EEEDE9] py-24 transition-all duration-400 ${fadeAllOut ? "opacity-0 -translate-y-3" : "opacity-100 translate-y-0"}`}>
+          <div className="max-w-3xl mx-auto px-8">
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-10 text-center fade-in">
+              <svg
+                className="animate-spin h-10 w-10 text-blue-600 mx-auto mb-6"
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+              >
+                <circle
+                  className="opacity-25"
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  strokeWidth="4"
+                ></circle>
+                <path
+                  className="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                ></path>
+              </svg>
+
+              <h2 className="text-2xl font-bold mb-2 text-black">
+                Building your regression models…
+              </h2>
+              <p className="text-gray-600 mb-8">
+                We’re training, evaluating, and preparing your report.
+              </p>
+
+              {/* Rotating model messages */}
+              <div className="relative h-6">
+                {modelPrevMsgIdx !== null ? (
+                  <p className="msg-out text-gray-500 font-medium text-sm text-center px-4">
+                    {modelMessages[modelPrevMsgIdx]}
+                  </p>
+                ) : (
+                  <p className="msg-in text-gray-800 font-medium text-sm text-center px-4">
+                    {modelMessages[modelMsgIdx]}
+                  </p>
+                )}
+              </div>
+
+              {/* Simple progress bar illusion */}
+              <div className="mt-8 w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+                <div className="h-2 bg-blue-600 animate-pulse" style={{ width: "70%" }} />
+              </div>
+
+              <p className="text-xs text-gray-500 mt-6">
+                This usually takes a moment. Thanks for your patience.
+              </p>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* ✅ Model Ready / Confirmation */}
+      {stage === "modelReady" && (
+        <section className="w-full bg-[#EEEDE9] py-24">
+          <div className="max-w-3xl mx-auto px-8">
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-10 text-center fade-in">
+              <div className="inline-flex items-center justify-center w-16 h-16 bg-green-500 rounded-full mb-4">
+                <svg
+                  className="w-10 h-10 text-white"
+                  fill="currentColor"
+                  viewBox="0 0 20 20"
+                >
+                  <path
+                    fillRule="evenodd"
+                    d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                    clipRule="evenodd"
+                  />
+                </svg>
+              </div>
+
+              <h2 className="text-3xl font-bold mb-4 text-black">Analysis complete</h2>
+              <p className="text-gray-700 mb-8">
+                Your regression models have been created and your insights report is ready.
+              </p>
+
+              <div className="flex justify-center gap-6">
+                <button
+                  onClick={handleViewReport}
+                  className="px-8 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+                >
+                  View Report
+                </button>
+                <button
+                  onClick={handleDownloadReport}
+                  className="px-8 py-3 bg-gray-800 text-white rounded-lg hover:bg-gray-700 transition"
+                >
+                  Download Report
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
+
       {/* ✅ Modal for Other Options */}
       {showModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -740,8 +935,8 @@ function Foresee() {
                   <li
                     key={idx}
                     onClick={() => {
-                      handleSelectTarget(suggestion);
                       setShowModal(false);
+                      handleSelectTarget(suggestion);
                     }}
                     className={`p-4 rounded-lg border cursor-pointer transition ${
                       selectedTarget === suggestion.variable

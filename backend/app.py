@@ -803,9 +803,10 @@ def select_target_variable(workflow_id):
         if nl_result and nl_result.get('success'):
             response['natural_language_insights'] = {
                 'success': True,
-                'file_path': nl_result.get('output_path'),
+                'json_path': nl_result.get('output_path'),
+                'pdf_path': nl_result.get('pdf_path'),
                 'insights': nl_result.get('insights'),
-                'message': 'Natural language insights generated successfully'
+                'message': 'Natural language insights and PDF report generated successfully'
             }
         elif nl_error:
             response['natural_language_insights'] = {
@@ -1706,6 +1707,227 @@ def get_insights_summary(workflow_id):
         
     except Exception as e:
         print(f"❌ Error checking insights data: {str(e)}")
+        traceback.print_exc()
+        return jsonify({
+            'error': str(e),
+            'type': type(e).__name__
+        }), 500
+
+
+@app.route('/api/workflow/<workflow_id>/report/view', methods=['GET'])
+def view_report(workflow_id):
+    """
+    View the latest generated PDF report for a workflow in browser
+    Automatically deletes PDF and JSON files after serving
+    
+    Args:
+        workflow_id: Workflow UUID
+        
+    Returns:
+        PDF file for viewing
+    """
+    try:
+        # Find the latest PDF for this workflow
+        backend_dir = Path(__file__).parent
+        pdf_dir = backend_dir / "pdf"
+        
+        if not pdf_dir.exists():
+            return jsonify({'error': 'No PDF reports found'}), 404
+        
+        # Find all PDFs for this workflow
+        pdf_pattern = f"insights_{workflow_id}_*.pdf"
+        pdf_files = list(pdf_dir.glob(pdf_pattern))
+        
+        if not pdf_files:
+            return jsonify({'error': f'No PDF report found for workflow {workflow_id}'}), 404
+        
+        # Get the most recent PDF
+        latest_pdf = max(pdf_files, key=lambda p: p.stat().st_mtime)
+        
+        print(f"📄 Viewing PDF: {latest_pdf.name}")
+        
+        # Read PDF into memory before deletion
+        import io
+        with open(latest_pdf, 'rb') as f:
+            pdf_data = io.BytesIO(f.read())
+        
+        # Find and delete corresponding JSON file
+        json_filename = latest_pdf.name.replace('.pdf', '.json')
+        json_path = backend_dir / "insights" / json_filename
+        
+        # Delete the PDF file
+        try:
+            latest_pdf.unlink()
+            print(f"   ✓ Deleted PDF: {latest_pdf.name}")
+        except Exception as del_e:
+            print(f"   ⚠️  Could not delete PDF: {del_e}")
+        
+        # Delete the JSON file
+        if json_path.exists():
+            try:
+                json_path.unlink()
+                print(f"   ✓ Deleted JSON: {json_filename}")
+            except Exception as del_e:
+                print(f"   ⚠️  Could not delete JSON: {del_e}")
+        
+        from flask import send_file
+        pdf_data.seek(0)
+        return send_file(
+            pdf_data,
+            mimetype='application/pdf',
+            as_attachment=False,
+            download_name=latest_pdf.name
+        )
+        
+    except Exception as e:
+        print(f"❌ Error viewing PDF: {str(e)}")
+        traceback.print_exc()
+        return jsonify({
+            'error': str(e),
+            'type': type(e).__name__
+        }), 500
+
+
+@app.route('/api/workflow/<workflow_id>/report/download', methods=['GET'])
+def download_report(workflow_id):
+    """
+    Download the latest generated PDF report for a workflow
+    Automatically deletes PDF and JSON files after serving
+    
+    Args:
+        workflow_id: Workflow UUID
+        
+    Returns:
+        PDF file as download
+    """
+    try:
+        # Find the latest PDF for this workflow
+        backend_dir = Path(__file__).parent
+        pdf_dir = backend_dir / "pdf"
+        
+        if not pdf_dir.exists():
+            return jsonify({'error': 'No PDF reports found'}), 404
+        
+        # Find all PDFs for this workflow
+        pdf_pattern = f"insights_{workflow_id}_*.pdf"
+        pdf_files = list(pdf_dir.glob(pdf_pattern))
+        
+        if not pdf_files:
+            return jsonify({'error': f'No PDF report found for workflow {workflow_id}'}), 404
+        
+        # Get the most recent PDF
+        latest_pdf = max(pdf_files, key=lambda p: p.stat().st_mtime)
+        
+        print(f"📥 Downloading PDF: {latest_pdf.name}")
+        
+        # Read PDF into memory before deletion
+        import io
+        with open(latest_pdf, 'rb') as f:
+            pdf_data = io.BytesIO(f.read())
+        
+        # Find and delete corresponding JSON file
+        json_filename = latest_pdf.name.replace('.pdf', '.json')
+        json_path = backend_dir / "insights" / json_filename
+        
+        # Delete the PDF file
+        try:
+            latest_pdf.unlink()
+            print(f"   ✓ Deleted PDF: {latest_pdf.name}")
+        except Exception as del_e:
+            print(f"   ⚠️  Could not delete PDF: {del_e}")
+        
+        # Delete the JSON file
+        if json_path.exists():
+            try:
+                json_path.unlink()
+                print(f"   ✓ Deleted JSON: {json_filename}")
+            except Exception as del_e:
+                print(f"   ⚠️  Could not delete JSON: {del_e}")
+        
+        from flask import send_file
+        pdf_data.seek(0)
+        return send_file(
+            pdf_data,
+            mimetype='application/pdf',
+            as_attachment=True,
+            download_name=f"ML_Report_{workflow_id}.pdf"
+        )
+        
+    except Exception as e:
+        print(f"❌ Error downloading PDF: {str(e)}")
+        traceback.print_exc()
+        return jsonify({
+            'error': str(e),
+            'type': type(e).__name__
+        }), 500
+
+
+@app.route('/api/workflow/<workflow_id>/download-pdf/<filename>', methods=['GET'])
+def download_pdf(workflow_id, filename):
+    """
+    Download a specific PDF report by filename
+    
+    Args:
+        workflow_id: Workflow UUID
+        filename: PDF filename
+        
+    Returns:
+        PDF file as download
+    """
+    try:
+        # Construct PDF path
+        backend_dir = Path(__file__).parent
+        pdf_path = backend_dir / "pdf" / filename
+        
+        if not pdf_path.exists():
+            return jsonify({'error': 'PDF file not found'}), 404
+        
+        from flask import send_file
+        return send_file(
+            pdf_path,
+            mimetype='application/pdf',
+            as_attachment=True,
+            download_name=filename
+        )
+        
+    except Exception as e:
+        print(f"❌ Error downloading PDF: {str(e)}")
+        traceback.print_exc()
+        return jsonify({
+            'error': str(e),
+            'type': type(e).__name__
+        }), 500
+
+
+@app.route('/api/workflow/<workflow_id>/view-pdf/<filename>', methods=['GET'])
+def view_pdf(workflow_id, filename):
+    """
+    View a specific PDF report by filename in browser
+    
+    Args:
+        workflow_id: Workflow UUID
+        filename: PDF filename
+        
+    Returns:
+        PDF file for viewing
+    """
+    try:
+        # Construct PDF path
+        backend_dir = Path(__file__).parent
+        pdf_path = backend_dir / "pdf" / filename
+        
+        if not pdf_path.exists():
+            return jsonify({'error': 'PDF file not found'}), 404
+        
+        from flask import send_file
+        return send_file(
+            pdf_path,
+            mimetype='application/pdf',
+            as_attachment=False
+        )
+        
+    except Exception as e:
+        print(f"❌ Error viewing PDF: {str(e)}")
         traceback.print_exc()
         return jsonify({
             'error': str(e),
