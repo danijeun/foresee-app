@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import Footer from "../components/Footer";
 
 const API_BASE_URL = "http://localhost:5000/api";
 
@@ -548,6 +549,9 @@ function Foresee() {
           </div>
         </div>
       )}
+
+      <Footer />
+
     </div>
   );
 }

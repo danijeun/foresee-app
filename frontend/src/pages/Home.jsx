@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import homeimage1 from "../assets/homeimage1.png";
+import Footer from "../components/Footer";
 
 function Home() {
   const steps = [
@@ -151,8 +152,13 @@ function Home() {
                   onClick={() => toggleFeature(feature.key)}
                   className="w-full flex justify-between items-center py-4 px-6 focus:outline-none"
                 >
-                  <span className="font-semibold text-gray-900">{feature.title}</span>
-                  <span className="text-gray-600 text-sm">{feature.short}</span>
+                  {/* Left side: Title */}
+                  <div className="flex flex-col text-left">
+                    <span className="font-semibold text-gray-900">{feature.title}</span>
+                    <span className="text-gray-600 text-sm">{feature.short}</span>
+                  </div>
+
+                  {/* Right side: Arrow */}
                   <svg
                     className={`w-5 h-5 transition-transform duration-300 ${isOpen ? "rotate-180" : ""}`}
                     fill="none"
@@ -163,6 +169,7 @@ function Home() {
                     <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
                   </svg>
                 </button>
+
 
                 <div
                   className={`overflow-hidden transition-all duration-300 ${
@@ -187,6 +194,8 @@ function Home() {
           </a>
         </div>
       </section>
+      <Footer />
+
     </div>
   );
 }
