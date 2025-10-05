@@ -6,13 +6,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>FOREsee</title>
 
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link
+      href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
 
     <script src="https://cdn.tailwindcss.com"></script>
 
     <style>
       body {
-        font-family: 'Poppins', sans-serif;
+        font-family: "Poppins", sans-serif;
       }
     </style>
   </head>
@@ -21,33 +24,4 @@
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <title>Foresee | Test</title>
-</head>
-<body>
-  <h1>Foresee</h1>
-
-  <!-- to upload -->
-  <h3>1. Upload your CSV</h3>
-  <input type="file" id="csvFile" accept=".csv">
-  <button id="uploadBtn">Upload</button>
-
-  <hr>
-
-  <!-- to select variable -->
-  <h3>2. Choose your target variable</h3>
-  <select id="targetSelect"></select>
-  <button id="sendTargetBtn">Send Target</button>
-
-  <hr>
-
-  <!-- to download report -->
-  <h3>3. Download generated report</h3>
-  <a id="downloadLink" href="#" style="display:none;" download="report.pdf">Download Report</a>
-
-  <script src="test.js"></script>
-</body>
 </html>

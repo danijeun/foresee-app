@@ -10,3 +10,29 @@
 .animate-zoom {
   animation: zoomInOut 2.5s ease-in-out infinite;
 }
+
+@keyframes fadeUp {
+  0% {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.fade-up {
+  opacity: 0;
+  animation: fadeUp 0.7s ease-out forwards;
+}
+
+.fade-delay-1 {
+  animation-delay: 0.02s;
+}
+.fade-delay-2 {
+  animation-delay: 0.204s;
+}
+.fade-delay-3 {
+  animation-delay: 0.406s;
+}
