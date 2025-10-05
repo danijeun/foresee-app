@@ -44,9 +44,16 @@ function TopBanner() {
           Foresee
         </Link>
 
-        <a href="#" className="hover:underline hover:underline-offset-4">
+        <Link
+          to="/help"
+          className={
+            location.pathname === "/help"
+              ? "underline underline-offset-4"
+              : "hover:underline hover:underline-offset-4"
+          }
+        >
           Need Help?
-        </a>
+        </Link>
 
         <Link
           to="/about"

@@ -4,6 +4,7 @@ import TopBanner from "./components/TopBanner";
 import Home from "./pages/Home";
 import Foresee from "./pages/Foresee";
 import About from "./pages/AboutUs";
+import Help from "./pages/Help";
 import AOS from "aos";
 import "aos/dist/aos.css";
 
@@ -24,6 +25,7 @@ function App() {
         <Route path="/" element={<Home />} />
         <Route path="/foresee" element={<Foresee />} />
         <Route path="/about" element={<About />} />
+        <Route path="/help" element={<Help />} />
       </Routes>
     </div>
   );

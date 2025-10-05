@@ -36,3 +36,77 @@
 .fade-delay-3 {
   animation-delay: 0.406s;
 }
+
+/* 🔹 Chevron background container */
+.chevron-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 200%;
+  height: 100%;
+  display: flex;
+  animation: chevronSlide 2.5s ease-out forwards;
+  opacity: 0.3; /* Subtle as requested */
+  pointer-events: none;
+}
+
+/* 🔹 Three chevron panels */
+.chevron-overlay > div {
+  flex: 1;
+  background: linear-gradient(
+    135deg,
+    rgba(0, 0, 0, 0.08) 0%,
+    rgba(0, 0, 0, 0.08) 50%,
+    transparent 50%,
+    transparent 100%
+  );
+  transform: skewX(-25deg);
+  background-size: cover;
+}
+
+/* 🔹 Slide-in animation */
+@keyframes chevronSlide {
+  from {
+    transform: translateX(50%);
+  }
+  to {
+    transform: translateX(0%);
+  }
+}
+
+/* 🔹 Inverse Chevron background container */
+.chevron-overlay-inverse {
+  position: absolute;
+  top: 0;
+  left: -50%;
+  width: 200%;
+  height: 100%;
+  display: flex;
+  animation: chevronSlideInverse 2.5s ease-out forwards;
+  opacity: 0.3;
+  pointer-events: none;
+}
+
+/* 🔹 Reuse same panels */
+.chevron-overlay-inverse > div {
+  flex: 1;
+  background: linear-gradient(
+    135deg,
+    rgba(0, 0, 0, 0.08) 0%,
+    rgba(0, 0, 0, 0.08) 50%,
+    transparent 50%,
+    transparent 100%
+  );
+  transform: skewX(-25deg);
+  background-size: cover;
+}
+
+/* 🔹 Slide from LEFT → RIGHT */
+@keyframes chevronSlideInverse {
+  from {
+    transform: translateX(-50%);
+  }
+  to {
+    transform: translateX(0%);
+  }
+}
