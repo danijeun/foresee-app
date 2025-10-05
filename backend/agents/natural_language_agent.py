@@ -9,6 +9,13 @@ import google.generativeai as genai
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 import os
+import base64
+import io
+import matplotlib
+matplotlib.use('Agg')  # Non-interactive backend
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -254,7 +261,11 @@ class NaturalLanguageAgent:
                         n_classes,
                         performance_summary,
                         top_features_summary,
-                        recommendations
+                        recommendations,
+                        confusion_matrix,
+                        top_features,
+                        feature_importance,
+                        preprocessing_details
                     FROM {schema_name}.{table}
                     WHERE table_name = '{table_name}'
                     ORDER BY created_at DESC
@@ -280,7 +291,11 @@ class NaturalLanguageAgent:
                         'n_classes': result[10],
                         'performance_summary': result[11],
                         'top_features_summary': result[12],
-                        'recommendations': result[13]
+                        'recommendations': result[13],
+                        'confusion_matrix': result[14],
+                        'top_features': result[15],
+                        'feature_importance': result[16],
+                        'preprocessing_details': result[17]
                     }
                     
                     ml_models.append(model_data)
@@ -491,32 +506,172 @@ Be specific, quantitative, and actionable. Use actual numbers from the data.
         insights: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
-        Structure the final output JSON
+        Structure the final output JSON with 5 comprehensive sections
         """
+        print(f"\n📊 Generating visualizations and tables...")
+        
+        # Generate visualizations
+        model_comparison_chart = self._generate_model_comparison_chart(ml_data)
+        
+        # Generate confusion matrices for each model
+        confusion_matrices = {}
+        feature_importance_charts = {}
+        
+        for model in ml_data:
+            if model.get('confusion_matrix'):
+                cm_chart = self._generate_confusion_matrix_chart(
+                    model['confusion_matrix'],
+                    model['model_type']
+                )
+                if cm_chart:
+                    confusion_matrices[model['model_type']] = cm_chart
+            
+            if model.get('top_features'):
+                fi_chart = self._generate_feature_importance_chart(
+                    model['top_features'],
+                    model['model_type']
+                )
+                if fi_chart:
+                    feature_importance_charts[model['model_type']] = fi_chart
+        
+        # Generate comparison table
+        metrics_table = self._generate_metrics_comparison_table(ml_data)
+        
+        # Best model
+        best_model = max(ml_data, key=lambda x: x['test_accuracy']) if ml_data else None
+        
+        # SECTION 1: DATASET
+        dataset_section = {
+            'title': 'Dataset Overview',
+            'description': self._generate_dataset_description(eda_data, table_name),
+            'statistics': {
+                'total_rows': eda_data['summary']['total_rows'] if eda_data['summary'] else 0,
+                'total_columns': eda_data['summary']['total_columns'] if eda_data['summary'] else 0,
+                'target_variable': eda_data['summary']['target_column'] if eda_data['summary'] else 'N/A',
+                'duplicate_rows': eda_data['summary'].get('duplicate_rows', 0) if eda_data['summary'] else 0,
+                'duplicate_percentage': f"{eda_data['summary'].get('duplicate_percentage', 0):.2f}%" if eda_data['summary'] else '0%',
+                'memory_usage_mb': f"{eda_data['summary']['memory_usage_mb']:.2f}" if (eda_data['summary'] and eda_data['summary'].get('memory_usage_mb')) else 'N/A'
+            },
+            'column_summary_table': [
+                {
+                    'Column': col.get('column_name', 'Unknown'),
+                    'Type': col.get('data_type', 'Unknown'),
+                    'Null %': f"{col.get('null_percentage', 0):.2f}%",
+                    'Unique Values': col.get('unique_count', 0),
+                    'Mean': f"{col['mean']:.4f}" if col.get('mean') is not None else 'N/A'
+                }
+                for col in (eda_data['columns'][:15] if eda_data['columns'] else [])
+            ]
+        }
+        
+        # SECTION 2: DATA PREPROCESSING
+        preprocessing_section = {
+            'title': 'Data Preprocessing',
+            'description': self._generate_preprocessing_description(ml_data),
+            'preprocessing_steps': []
+        }
+        
+        if ml_data and ml_data[0].get('preprocessing_details'):
+            prep_details = ml_data[0]['preprocessing_details']
+            # Parse preprocessing_details if it's a string
+            if isinstance(prep_details, str):
+                prep_details = json.loads(prep_details)
+            preprocessing_section['preprocessing_steps'] = [
+                {
+                    'step': 'Missing Values Handling',
+                    'description': f"Handled {prep_details.get('missing_values_handled', 0)} missing values through median imputation for numeric columns"
+                },
+                {
+                    'step': 'Categorical Encoding',
+                    'description': f"Encoded {len(prep_details.get('encoded_columns', []))} categorical columns using Label Encoding",
+                    'columns': prep_details.get('encoded_columns', [])
+                },
+                {
+                    'step': 'Feature Removal',
+                    'description': f"Dropped {len(prep_details.get('dropped_columns', []))} columns due to high cardinality, missing values, or data type incompatibility",
+                    'columns': prep_details.get('dropped_columns', [])
+                },
+                {
+                    'step': 'Feature Scaling',
+                    'description': 'Applied StandardScaler to normalize all numeric features'
+                }
+            ]
+        
+        # SECTION 3: MODELS PERFORMANCE SUMMARY
+        performance_section = {
+            'title': 'Models Performance Summary',
+            'description': self._generate_performance_description(ml_data, best_model),
+            'metrics_comparison_table': metrics_table,
+            'visualizations': {
+                'model_comparison_chart': model_comparison_chart,
+                'confusion_matrices': confusion_matrices
+            },
+            'best_model': {
+                'name': best_model['model_type'] if best_model else 'N/A',
+                'accuracy': f"{best_model['test_accuracy']:.4f}" if best_model else 'N/A',
+                'precision': f"{best_model['test_precision']:.4f}" if best_model else 'N/A',
+                'recall': f"{best_model['test_recall']:.4f}" if best_model else 'N/A',
+                'f1_score': f"{best_model['test_f1_score']:.4f}" if best_model else 'N/A',
+                'roc_auc': f"{best_model['test_roc_auc']:.4f}" if best_model else 'N/A'
+            } if best_model else None
+        }
+        
+        # SECTION 4: MODEL EXPLAINABILITY
+        explainability_section = {
+            'title': 'Model Explainability',
+            'description': self._generate_explainability_description(ml_data),
+            'feature_importance': {},
+            'visualizations': feature_importance_charts,
+            'interpretation': {}
+        }
+        
+        for model in ml_data:
+            if model.get('top_features'):
+                top_features = model['top_features']
+                # Parse top_features if it's a string
+                if isinstance(top_features, str):
+                    top_features = json.loads(top_features)
+                
+                explainability_section['feature_importance'][model['model_type']] = [
+                    {
+                        'feature': f['feature'],
+                        'importance': f"{abs(f.get('coefficient', f.get('importance', 0))):.6f}",
+                        'rank': idx + 1
+                    }
+                    for idx, f in enumerate(top_features[:10])
+                ]
+        
+        # SECTION 5: CONCLUSION
+        conclusion_section = {
+            'title': 'Conclusion',
+            'summary': self._generate_conclusion_summary(eda_data, ml_data, best_model),
+            'key_findings': self._generate_key_findings(eda_data, ml_data, best_model),
+            'recommendations': self._generate_recommendations(ml_data, best_model),
+            'next_steps': [
+                'Deploy the best performing model for production use',
+                'Monitor model performance with real-world data',
+                'Consider ensemble methods to potentially improve accuracy',
+                'Investigate feature engineering opportunities for underperforming features',
+                'Set up regular model retraining pipeline'
+            ]
+        }
+        
+        # Complete output structure
         output = {
             'metadata': {
                 'workflow_id': workflow_id,
                 'table_name': table_name,
                 'generated_at': datetime.now().isoformat(),
-                'generator': 'Natural Language Agent v1.0'
+                'generator': 'Foresee Natural Language Agent v2.0',
+                'sections': ['dataset', 'preprocessing', 'performance', 'explainability', 'conclusion']
             },
-            'dataset_overview': {
-                'total_rows': eda_data['summary']['total_rows'] if eda_data['summary'] else None,
-                'total_columns': eda_data['summary']['total_columns'] if eda_data['summary'] else None,
-                'target_variable': eda_data['summary']['target_column'] if eda_data['summary'] else None,
-                'duplicate_percentage': eda_data['summary']['duplicate_percentage'] if eda_data['summary'] else None
+            'sections': {
+                '1_dataset': dataset_section,
+                '2_data_preprocessing': preprocessing_section,
+                '3_models_performance': performance_section,
+                '4_model_explainability': explainability_section,
+                '5_conclusion': conclusion_section
             },
-            'ml_models_summary': [
-                {
-                    'model_type': m['model_type'],
-                    'accuracy': m['test_accuracy'],
-                    'precision': m['test_precision'],
-                    'recall': m['test_recall'],
-                    'f1_score': m['test_f1_score'],
-                    'roc_auc': m['test_roc_auc']
-                }
-                for m in ml_data
-            ],
             'natural_language_insights': insights,
             'raw_data': {
                 'eda': eda_data,
@@ -524,7 +679,312 @@ Be specific, quantitative, and actionable. Use actual numbers from the data.
             }
         }
         
+        print(f"   ✓ Generated {len(confusion_matrices)} confusion matrices")
+        print(f"   ✓ Generated {len(feature_importance_charts)} feature importance charts")
+        print(f"   ✓ Generated comparison table with {len(metrics_table)} models")
+        
         return output
+    
+    def _generate_dataset_description(self, eda_data: Dict[str, Any], table_name: str) -> str:
+        """Generate dataset description"""
+        if not eda_data['summary']:
+            return "Dataset information not available."
+        
+        s = eda_data['summary']
+        desc = f"The dataset '{table_name}' contains {s['total_rows']:,} rows and {s['total_columns']} columns. "
+        desc += f"The target variable for prediction is '{s['target_column']}'. "
+        
+        if s.get('duplicate_rows', 0) > 0:
+            desc += f"The dataset contains {s['duplicate_rows']:,} duplicate rows ({s['duplicate_percentage']:.2f}%), which were identified during analysis. "
+        
+        if s.get('memory_usage_mb'):
+            desc += f"The total memory footprint of the dataset is approximately {s['memory_usage_mb']:.2f} MB."
+        
+        return desc
+    
+    def _generate_preprocessing_description(self, ml_data: List[Dict[str, Any]]) -> str:
+        """Generate preprocessing description"""
+        if not ml_data or not ml_data[0].get('preprocessing_details'):
+            return "Preprocessing details not available."
+        
+        prep = ml_data[0]['preprocessing_details']
+        # Parse preprocessing_details if it's a string
+        if isinstance(prep, str):
+            prep = json.loads(prep)
+        
+        desc = "Data preprocessing involved several key steps to prepare the dataset for machine learning. "
+        desc += f"We handled {prep.get('missing_values_handled', 0)} missing values through median imputation. "
+        desc += f"A total of {len(prep.get('dropped_columns', []))} columns were removed due to high cardinality, excessive missing values, or incompatible data types. "
+        desc += f"{len(prep.get('encoded_columns', []))} categorical columns were encoded using Label Encoding, "
+        desc += "and all numeric features were scaled using StandardScaler to ensure consistent feature ranges across the dataset."
+        
+        return desc
+    
+    def _generate_performance_description(self, ml_data: List[Dict[str, Any]], best_model: Dict[str, Any]) -> str:
+        """Generate performance summary description"""
+        if not ml_data:
+            return "No model performance data available."
+        
+        desc = f"We evaluated {len(ml_data)} machine learning models on the dataset: "
+        desc += ", ".join([m['model_type'] for m in ml_data]) + ". "
+        
+        if best_model:
+            desc += f"The best performing model was {best_model['model_type']} with a test accuracy of {best_model['test_accuracy']:.2%}. "
+            desc += f"This model achieved a precision of {best_model['test_precision']:.2%}, "
+            desc += f"recall of {best_model['test_recall']:.2%}, and F1-score of {best_model['test_f1_score']:.2%}. "
+            
+            if best_model['test_roc_auc']:
+                desc += f"The ROC-AUC score of {best_model['test_roc_auc']:.4f} indicates excellent discriminative ability."
+        
+        return desc
+    
+    def _generate_explainability_description(self, ml_data: List[Dict[str, Any]]) -> str:
+        """Generate explainability description"""
+        desc = "Understanding which features drive model predictions is crucial for both model validation and business insights. "
+        desc += "Feature importance analysis reveals the relative contribution of each input variable to the model's predictions. "
+        desc += "We analyzed feature importance across all models using their native importance metrics: "
+        desc += "coefficients for Logistic Regression, Gini importance for Decision Trees, and gain-based importance for XGBoost. "
+        desc += "The visualizations and rankings below show the top 10 most influential features for each model, "
+        desc += "helping stakeholders understand what factors are most predictive of the target variable."
+        
+        return desc
+    
+    def _generate_conclusion_summary(self, eda_data: Dict[str, Any], ml_data: List[Dict[str, Any]], best_model: Dict[str, Any]) -> str:
+        """Generate conclusion summary"""
+        if not best_model:
+            return "Insufficient data to generate conclusion."
+        
+        summary = f"This analysis successfully developed and evaluated multiple machine learning models for predicting '{best_model['target_variable']}'. "
+        summary += f"The {best_model['model_type']} emerged as the best performer with {best_model['test_accuracy']:.2%} accuracy. "
+        
+        # Check for overfitting
+        if best_model['train_accuracy'] and (best_model['train_accuracy'] - best_model['test_accuracy'] > 0.1):
+            summary += "However, the model shows signs of overfitting, which should be addressed before deployment. "
+        else:
+            summary += "The model demonstrates good generalization with minimal overfitting. "
+        
+        summary += "The analysis provides actionable insights into feature importance and model behavior, "
+        summary += "enabling informed decision-making for model deployment and further optimization."
+        
+        return summary
+    
+    def _generate_key_findings(self, eda_data: Dict[str, Any], ml_data: List[Dict[str, Any]], best_model: Dict[str, Any]) -> List[str]:
+        """Generate key findings"""
+        findings = []
+        
+        if best_model:
+            findings.append(f"{best_model['model_type']} achieved the highest accuracy of {best_model['test_accuracy']:.2%}")
+            
+            if best_model['test_roc_auc'] and best_model['test_roc_auc'] > 0.9:
+                findings.append(f"Excellent ROC-AUC score of {best_model['test_roc_auc']:.4f} indicates strong predictive power")
+            
+            # Check performance across models
+            if ml_data and len(ml_data) > 1:
+                accuracies = [m['test_accuracy'] for m in ml_data]
+                accuracy_range = max(accuracies) - min(accuracies)
+                if accuracy_range < 0.05:
+                    findings.append("All models performed similarly, suggesting the problem has consistent patterns")
+                else:
+                    findings.append(f"Model performance varied significantly ({accuracy_range:.2%} accuracy range)")
+        
+        if eda_data['summary']:
+            s = eda_data['summary']
+            if s['duplicate_percentage'] > 5:
+                findings.append(f"Dataset contains {s['duplicate_percentage']:.1f}% duplicate rows requiring attention")
+            
+            high_null_cols = [c for c in eda_data['columns'] if c['null_percentage'] > 20]
+            if high_null_cols:
+                findings.append(f"{len(high_null_cols)} columns have >20% missing values")
+        
+        if ml_data and ml_data[0].get('top_features'):
+            top_features = ml_data[0]['top_features']
+            # Parse top_features if it's a string
+            if isinstance(top_features, str):
+                top_features = json.loads(top_features)
+            if top_features and len(top_features) > 0:
+                top_feature = top_features[0]['feature']
+                findings.append(f"'{top_feature}' identified as the most important predictive feature")
+        
+        return findings
+    
+    def _generate_recommendations(self, ml_data: List[Dict[str, Any]], best_model: Dict[str, Any]) -> List[str]:
+        """Generate recommendations"""
+        recommendations = []
+        
+        if not best_model:
+            return ["Collect more data and retrain models"]
+        
+        # Performance-based recommendations
+        if best_model['test_accuracy'] < 0.7:
+            recommendations.append("Consider feature engineering or collecting additional relevant features to improve model performance")
+            recommendations.append("Explore advanced models like Neural Networks or Ensemble methods")
+        elif best_model['test_accuracy'] > 0.95:
+            recommendations.append("Excellent performance achieved - proceed with deployment planning")
+            recommendations.append("Implement A/B testing to validate model performance in production")
+        
+        # Overfitting check
+        if best_model.get('train_accuracy') and (best_model['train_accuracy'] - best_model['test_accuracy'] > 0.1):
+            recommendations.append("Address overfitting through regularization techniques or by collecting more training data")
+            recommendations.append("Consider using cross-validation for more robust model evaluation")
+        
+        # Class imbalance
+        if best_model.get('n_classes') and best_model['n_classes'] > 2:
+            recommendations.append("For multi-class problems, investigate per-class performance to identify weak predictions")
+        
+        # General recommendations
+        recommendations.append("Set up model monitoring to track performance degradation over time")
+        recommendations.append("Document model assumptions and limitations for stakeholders")
+        recommendations.append("Establish a model retraining schedule based on data drift analysis")
+        
+        return recommendations
+    
+    def _generate_model_comparison_chart(self, ml_data: List[Dict[str, Any]]) -> str:
+        """
+        Generate a bar chart comparing model accuracies (returns base64 encoded image)
+        """
+        if not ml_data:
+            return None
+        
+        try:
+            fig, ax = plt.subplots(figsize=(10, 6))
+            
+            models = [m['model_type'] for m in ml_data]
+            accuracies = [m['test_accuracy'] * 100 for m in ml_data]
+            
+            bars = ax.bar(models, accuracies, color=['#4CAF50', '#2196F3', '#FF9800'])
+            ax.set_ylabel('Accuracy (%)', fontsize=12)
+            ax.set_title('Model Performance Comparison', fontsize=14, fontweight='bold')
+            ax.set_ylim([0, 100])
+            
+            # Add value labels on bars
+            for bar in bars:
+                height = bar.get_height()
+                ax.text(bar.get_x() + bar.get_width()/2., height,
+                       f'{height:.2f}%',
+                       ha='center', va='bottom')
+            
+            plt.tight_layout()
+            
+            # Convert to base64
+            buffer = io.BytesIO()
+            plt.savefig(buffer, format='png', dpi=150, bbox_inches='tight')
+            buffer.seek(0)
+            image_base64 = base64.b64encode(buffer.read()).decode()
+            plt.close(fig)
+            
+            return image_base64
+        except Exception as e:
+            print(f"   ⚠️  Error generating model comparison chart: {e}")
+            return None
+    
+    def _generate_confusion_matrix_chart(self, confusion_matrix: Any, model_type: str) -> str:
+        """
+        Generate confusion matrix heatmap (returns base64 encoded image)
+        """
+        try:
+            # Parse confusion matrix if it's a string
+            if isinstance(confusion_matrix, str):
+                confusion_matrix = json.loads(confusion_matrix)
+            
+            cm = np.array(confusion_matrix)
+            
+            fig, ax = plt.subplots(figsize=(8, 6))
+            im = ax.imshow(cm, cmap='Blues')
+            
+            # Add colorbar
+            plt.colorbar(im, ax=ax)
+            
+            # Set ticks
+            n_classes = cm.shape[0]
+            ax.set_xticks(np.arange(n_classes))
+            ax.set_yticks(np.arange(n_classes))
+            ax.set_xticklabels(np.arange(n_classes))
+            ax.set_yticklabels(np.arange(n_classes))
+            
+            # Add text annotations
+            for i in range(n_classes):
+                for j in range(n_classes):
+                    text = ax.text(j, i, cm[i, j],
+                                 ha="center", va="center", color="black" if cm[i, j] < cm.max()/2 else "white")
+            
+            ax.set_title(f'Confusion Matrix - {model_type}', fontsize=14, fontweight='bold')
+            ax.set_ylabel('True Label', fontsize=12)
+            ax.set_xlabel('Predicted Label', fontsize=12)
+            
+            plt.tight_layout()
+            
+            # Convert to base64
+            buffer = io.BytesIO()
+            plt.savefig(buffer, format='png', dpi=150, bbox_inches='tight')
+            buffer.seek(0)
+            image_base64 = base64.b64encode(buffer.read()).decode()
+            plt.close(fig)
+            
+            return image_base64
+        except Exception as e:
+            print(f"   ⚠️  Error generating confusion matrix: {e}")
+            return None
+    
+    def _generate_feature_importance_chart(self, top_features: Any, model_type: str, top_n: int = 10) -> str:
+        """
+        Generate feature importance bar chart (returns base64 encoded image)
+        """
+        try:
+            # Parse top_features if it's a string
+            if isinstance(top_features, str):
+                top_features = json.loads(top_features)
+            
+            features = top_features[:top_n] if isinstance(top_features, list) else []
+            
+            if not features:
+                return None
+            
+            fig, ax = plt.subplots(figsize=(10, 6))
+            
+            feature_names = [f['feature'] for f in features]
+            importances = [abs(f.get('coefficient', f.get('importance', 0))) for f in features]
+            
+            bars = ax.barh(feature_names, importances, color='#4CAF50')
+            ax.set_xlabel('Importance', fontsize=12)
+            ax.set_title(f'Top {len(features)} Feature Importance - {model_type}', fontsize=14, fontweight='bold')
+            ax.invert_yaxis()
+            
+            # Add value labels
+            for i, bar in enumerate(bars):
+                width = bar.get_width()
+                ax.text(width, bar.get_y() + bar.get_height()/2.,
+                       f'{width:.4f}',
+                       ha='left', va='center', fontsize=9)
+            
+            plt.tight_layout()
+            
+            # Convert to base64
+            buffer = io.BytesIO()
+            plt.savefig(buffer, format='png', dpi=150, bbox_inches='tight')
+            buffer.seek(0)
+            image_base64 = base64.b64encode(buffer.read()).decode()
+            plt.close(fig)
+            
+            return image_base64
+        except Exception as e:
+            print(f"   ⚠️  Error generating feature importance chart: {e}")
+            return None
+    
+    def _generate_metrics_comparison_table(self, ml_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Generate a comparison table of all model metrics
+        """
+        table = []
+        for model in ml_data:
+            table.append({
+                'Model': model['model_type'],
+                'Accuracy': f"{model['test_accuracy']:.4f}" if model['test_accuracy'] else 'N/A',
+                'Precision': f"{model['test_precision']:.4f}" if model['test_precision'] else 'N/A',
+                'Recall': f"{model['test_recall']:.4f}" if model['test_recall'] else 'N/A',
+                'F1-Score': f"{model['test_f1_score']:.4f}" if model['test_f1_score'] else 'N/A',
+                'ROC-AUC': f"{model['test_roc_auc']:.4f}" if model['test_roc_auc'] else 'N/A'
+            })
+        return table
     
     def _save_to_json(self, output: Dict[str, Any], filepath: str):
         """
