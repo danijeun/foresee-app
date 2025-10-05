@@ -1,9 +1,11 @@
 flask==3.0.0
 flask-cors==4.0.0
+snowflake-connector-python==3.12.0
 snowflake-snowpark-python==1.39.1
 pandas==2.2.0
 numpy==1.26.0
 scikit-learn==1.5.0
 xgboost==2.1.0
 python-dotenv==1.0.1
+google-generativeai==0.8.3
 
