@@ -8,6 +8,7 @@ function Foresee() {
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [dragActive, setDragActive] = useState(false);
+  const [progress, setProgress] = useState(0);
   const fileInputRef = useRef(null);
 
   // ✅ STAGES: upload → loading → fadingOut → success → modelLoading → modelReady
@@ -149,6 +150,23 @@ function Foresee() {
     else if (e.type === "dragleave") setDragActive(false);
   };
 
+    useEffect(() => {
+    if (stage === "modelLoading") {
+      setProgress(0); // reset when entering
+
+      const interval = setInterval(() => {
+        setProgress((prev) => {
+          if (prev < 94) {
+            return prev + 2; // increment gradually
+          }
+          return prev; // stop increasing at ~90%
+        });
+      }, 500);
+
+      return () => clearInterval(interval);
+    }
+  }, [stage]);
+
   const handleDrop = (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -177,92 +195,110 @@ function Foresee() {
   };
 
   // ✅ After selecting a target: keep banner, then fade everything out after 2s → show model loader → 10s → final screen
-  const handleSelectTarget = async (suggestion) => {
-    if (!result?.workflow?.id || !result?.upload?.table_name) {
-      setError("Missing workflow information");
+const handleSelectTarget = async (suggestion) => {
+  if (!result?.workflow?.id || !result?.upload?.table_name) {
+    setError("Missing workflow information");
+    return;
+  }
+
+  // ✅ Immediately reflect user selection in UI
+  setSelectedTarget(suggestion.variable);
+
+  // ✅ Trigger fade + move to model loading right away
+  const t1 = setTimeout(() => setFadeAllOut(true), 2000);
+  pushTimer(t1);
+
+  const t2 = setTimeout(() => {
+    setStage("modelLoading");
+    setFadeAllOut(false);
+    setModelMsgIdx(0);
+    setModelPrevMsgIdx(null);
+  }, 2400);
+  pushTimer(t2);
+
+  // ✅ Begin rotating loader messages immediately
+  let msgInterval = setInterval(() => {
+    setModelPrevMsgIdx((idx) => idx); // hold previous
+    setTimeout(() => {
+      setModelMsgIdx((cur) =>
+        cur < modelMessages.length - 1 ? cur + 1 : 0
+      );
+      setModelPrevMsgIdx(null);
+    }, MESSAGE_FADE_TIME);
+  }, 2000);
+
+  pushTimer(msgInterval);
+
+  const stopLoading = () => {
+    clearAllTimers(); // Stops all timeouts & intervals
+    if (msgInterval) clearInterval(msgInterval);
+  };
+
+  // ✅ Begin async save in background
+  setSavingTarget(true);
+  setTargetError(null);
+
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}/workflow/${result.workflow.id}/select-target`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          target_variable: suggestion.variable,
+          table_name: result.upload.table_name,
+          problem_type: suggestion.problem_type,
+          importance_score: suggestion.importance_score,
+        }),
+      }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error("❌ Target selection error:", data.error);
+      setTargetError(data.error || "Failed to save target selection");
+
+
+      // ✅ Cancel loader and revert UI
+      stopLoading();
+      setProgress(0);
+      setStage("success");
+      setFadeAllOut(false);
       return;
     }
 
-    setSavingTarget(true);
-    setTargetError(null);
+    console.log("✅ Target variable saved:", data);
 
-    try {
-      console.log(`💾 Saving target selection: ${suggestion.variable}`);
-
-      const response = await fetch(
-        `${API_BASE_URL}/workflow/${result.workflow.id}/select-target`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            target_variable: suggestion.variable,
-            table_name: result.upload.table_name,
-            problem_type: suggestion.problem_type,
-            importance_score: suggestion.importance_score,
-          }),
-        }
-      );
-
-      const data = await response.json();
-
-      if (response.ok) {
-        setSelectedTarget(suggestion.variable);
-        console.log("✅ Target variable saved:", data);
-
-        // ✅ 2s later: fade out all success content
-        const t1 = setTimeout(() => {
-          setFadeAllOut(true);
-        }, 2000);
-        pushTimer(t1);
-
-        // After fade (0.4s), switch to modelLoading
-        const t2 = setTimeout(() => {
-          setStage("modelLoading");
-          setFadeAllOut(false); // reset for future runs
-          setModelMsgIdx(0);
-          setModelPrevMsgIdx(null);
-        }, 2000 + 400);
-        pushTimer(t2);
-
-        // ✅ Model loader runs for 10 seconds with rotating messages
-        const msgInterval = setInterval(() => {
-          setModelPrevMsgIdx((prev) => (prev === null ? 0 : modelMsgIdx));
-          setModelPrevMsgIdx(modelMsgIdx);
-          const t = setTimeout(() => {
-            setModelMsgIdx((cur) => (cur < modelMessages.length - 1 ? cur + 1 : 0));
-            setModelPrevMsgIdx(null);
-          }, MESSAGE_FADE_TIME);
-          pushTimer(t);
-        }, 2000);
-
-        // stop the interval when we leave modelLoading
-        const stopInterval = () => clearInterval(msgInterval);
-
-        // After 10 seconds: fade out loader → show modelReady
-        const t3 = setTimeout(() => {
-          stopInterval();
-          setFadeAllOut(true);
-        }, 10000);
-        pushTimer(t3);
-
-        const t4 = setTimeout(() => {
-          setStage("modelReady");
-          setFadeAllOut(false);
-        }, 10000 + 400);
-        pushTimer(t4);
-      } else {
-        setTargetError(data.error || "Failed to save target selection");
-        console.error("❌ Target selection error:", data.error);
-      }
-    } catch (err) {
-      setTargetError(`Failed to save target: ${err.message}`);
-      console.error("❌ Target save error:", err);
-    } finally {
-      setSavingTarget(false);
+    // Smooth finish before going to 100
+    if (progress < 90) {
+      setProgress(90);
     }
-  };
+    setTimeout(() => setProgress(100), 300);
+
+
+    // ✅ Now that backend confirmed, move to modelReady
+    stopLoading();
+    setFadeAllOut(true);
+
+    const t3 = setTimeout(() => {
+      setStage("modelReady");
+      setFadeAllOut(false);
+    }, 400);
+    pushTimer(t3);
+
+  } catch (err) {
+    console.error("❌ Target save error:", err);
+    setTargetError(`Failed to save target: ${err.message}`);
+
+    // ✅ Cancel loader and revert UI
+    stopLoading();
+    setStage("success");
+    setFadeAllOut(false);
+  } finally {
+    setSavingTarget(false);
+  }
+};
 
   const handleUpload = async () => {
     if (!file) {
@@ -735,21 +771,21 @@ function Foresee() {
             )}
 
             {/* ✅ Success details */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
+              {/* ✅ CSV File Name */}
               <div className="bg-white rounded-xl p-6 shadow-lg">
-                <div className="text-sm text-gray-600 mb-2">Workflow ID</div>
-                <div className="font-mono text-xs text-gray-800 break-all">
-                  {result.workflow.id}
-                </div>
+              <div className="text-sm text-gray-600 mb-2">File Name</div>
+              <div className="text-xs font-mono text-gray-800 break-words max-w-full truncate">
+                {result.upload.file_name ||
+                result.upload.original_filename ||
+                result.upload.filename ||
+                result.upload.name ||
+                "Unknown File"}
               </div>
+            </div>
 
-              <div className="bg-white rounded-xl p-6 shadow-lg">
-                <div className="text-sm text-gray-600 mb-2">Schema Name</div>
-                <div className="font-mono text-xs text-gray-800 break-all">
-                  {result.workflow.schema}
-                </div>
-              </div>
 
+              {/* ✅ Rows Loaded (kept) */}
               <div className="bg-white rounded-xl p-6 shadow-lg">
                 <div className="text-sm text-gray-600 mb-2">Rows Loaded</div>
                 <div className="text-3xl font-bold text-blue-600">
@@ -757,6 +793,7 @@ function Foresee() {
                 </div>
               </div>
 
+              {/* ✅ File Size (kept) */}
               <div className="bg-white rounded-xl p-6 shadow-lg">
                 <div className="text-sm text-gray-600 mb-2">File Size</div>
                 <div className="text-3xl font-bold text-blue-600">
@@ -864,8 +901,12 @@ function Foresee() {
 
               {/* Simple progress bar illusion */}
               <div className="mt-8 w-full h-2 bg-gray-200 rounded-full overflow-hidden">
-                <div className="h-2 bg-blue-600 animate-pulse" style={{ width: "70%" }} />
+                <div
+                  className="h-2 bg-blue-600 transition-all duration-300"
+                  style={{ width: `${progress}%` }}
+                />
               </div>
+
 
               <p className="text-xs text-gray-500 mt-6">
                 This usually takes a moment. Thanks for your patience.
