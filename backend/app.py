@@ -18,7 +18,6 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from services.workflow_manager import WorkflowManager
 from services.snowflake_ingestion import SnowflakeCSVUploader
-from services.eda_service import WorkflowEDAService
 from agents.target_variable_agent import TargetVariableAgent
 
 app = Flask(__name__)
@@ -391,147 +390,39 @@ def execute_query():
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/api/eda/<workflow_id>/<analysis_id>', methods=['GET'])
-def get_eda_results(workflow_id, analysis_id):
+@app.route('/api/analyze-target-variable', methods=['POST'])
+def analyze_target_variable():
     """
-    Get EDA results for a specific analysis
+    Analyze a workflow's dataset and extract the most important target variables
+    ranked by importance (1-100 score) using Gemini AI
     
-    Args:
-        workflow_id: Workflow UUID
-        analysis_id: EDA analysis ID
+    Body:
+        {
+            "workflow_id": "uuid",
+            "table_name": "optional_table_name",
+            "sample_size": 100  // optional, default 100
+        }
         
     Returns:
-        JSON with complete EDA results
+        JSON with top 5 target variables ranked by importance, including:
+        - Importance scores (1-100)
+        - Predictability assessment (HIGH/MEDIUM/LOW)
+        - Problem type (regression/classification)
+        - Suggested features
+        - Ranking rationale
     """
     try:
-        schema_name = f"WORKFLOW_{workflow_id}"
-        eda_service = WorkflowEDAService(schema_name)
+        data = request.get_json()
+        workflow_id = data.get('workflow_id')
+        table_name = data.get('table_name')
+        sample_size = data.get('sample_size', 100)
         
-        results = eda_service.get_eda_results(analysis_id)
+        if not workflow_id:
+            return jsonify({'error': 'workflow_id is required'}), 400
         
-        if not results:
-            return jsonify({'error': 'EDA analysis not found'}), 404
+        print(f"🤖 Starting target variable analysis for workflow: {workflow_id}")
         
-        return jsonify({
-            'success': True,
-            'data': results
-        }), 200
-        
-    except Exception as e:
-        print(f"❌ Error: {str(e)}")
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/eda/<workflow_id>/latest/<table_name>', methods=['GET'])
-def get_latest_eda(workflow_id, table_name):
-    """
-    Get the latest EDA analysis for a specific table
-    
-    Args:
-        workflow_id: Workflow UUID
-        table_name: Table name
-        
-    Returns:
-        JSON with latest EDA results
-    """
-    try:
-        schema_name = f"WORKFLOW_{workflow_id}"
-        eda_service = WorkflowEDAService(schema_name)
-        
-        results = eda_service.get_latest_eda_for_table(table_name)
-        
-        if not results:
-            return jsonify({'error': 'No EDA analysis found for this table'}), 404
-        
-        return jsonify({
-            'success': True,
-            'data': results
-        }), 200
-        
-    except Exception as e:
-        print(f"❌ Error: {str(e)}")
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/eda/<workflow_id>/summary', methods=['GET'])
-def get_workflow_eda_summary(workflow_id):
-    """
-    Get summary of all EDA analyses in a workflow
-    
-    Args:
-        workflow_id: Workflow UUID
-        
-    Returns:
-        JSON with list of all EDA analyses
-    """
-    try:
-        schema_name = f"WORKFLOW_{workflow_id}"
-        
-        manager = WorkflowManager()
-        uploader = manager.get_workflow_uploader(schema_name=schema_name)
-        
-        # Query all EDA summaries
-        query = f"""
-            SELECT 
-                analysis_id,
-                table_name,
-                total_rows,
-                total_columns,
-                duplicate_percentage,
-                analysis_type,
-                target_column
-            FROM {schema_name}.workflow_eda_summary
-        """
-        
-        results = uploader.query(query)
-        
-        analyses = []
-        for row in results:
-            analyses.append({
-                'analysis_id': row[0],
-                'table_name': row[1],
-                'total_rows': row[2],
-                'total_columns': row[3],
-                'duplicate_percentage': row[4],
-                'analysis_type': row[5],
-                'target_column': row[6]
-            })
-        
-        uploader.close()
-        manager.close()
-        
-        return jsonify({
-            'success': True,
-            'count': len(analyses),
-            'analyses': analyses
-        }), 200
-        
-    except Exception as e:
-        print(f"❌ Error: {str(e)}")
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/target-suggestions/<workflow_id>/<table_name>', methods=['GET'])
-def get_target_suggestions(workflow_id, table_name):
-    """
-    Get target variable suggestions using the Target Variable Agent
-    
-    Args:
-        workflow_id: Workflow UUID
-        table_name: Table name to analyze
-        
-    Query Parameters:
-        sample_size: Number of rows to sample (default: 100)
-        
-    Returns:
-        JSON with ranked target variable suggestions
-    """
-    try:
-        sample_size = request.args.get('sample_size', 100, type=int)
-        
-        print(f"\n🎯 Analyzing target variables for workflow {workflow_id}, table {table_name}")
-        
-        # Initialize Target Variable Agent
+        # Initialize the agent
         agent = TargetVariableAgent()
         
         # Analyze the workflow
@@ -541,126 +432,11 @@ def get_target_suggestions(workflow_id, table_name):
             sample_size=sample_size
         )
         
-        # Extract recommendations
-        recommendations = result.get('suggestions', {}).get('recommendations', [])
-        ranking_rationale = result.get('suggestions', {}).get('ranking_rationale', '')
-        
-        print(f"  ✓ Found {len(recommendations)} target variable suggestions")
-        
-        return jsonify({
-            'success': True,
-            'workflow_id': workflow_id,
-            'table_name': table_name,
-            'recommendations': recommendations,
-            'ranking_rationale': ranking_rationale,
-            'total_columns': len(result.get('columns', [])),
-            'row_count': result.get('row_count', 0)
-        }), 200
+        print(f"✅ Analysis completed successfully")
+        return jsonify(result), 200
         
     except Exception as e:
-        print(f"❌ Error getting target suggestions: {str(e)}")
-        traceback.print_exc()
-        return jsonify({
-            'error': str(e),
-            'type': type(e).__name__
-        }), 500
-
-
-@app.route('/api/workflow/<workflow_id>/select-target', methods=['POST'])
-def select_target_variable(workflow_id):
-    """
-    Save the user's selected target variable in the workflow_eda_summary table
-    
-    Args:
-        workflow_id: Workflow UUID
-        
-    Body:
-        {
-            "target_variable": "column_name",
-            "table_name": "table_name",
-            "problem_type": "regression/classification",
-            "importance_score": 95
-        }
-        
-    Returns:
-        JSON with success confirmation
-    """
-    try:
-        data = request.get_json()
-        target_variable = data.get('target_variable')
-        table_name = data.get('table_name')
-        problem_type = data.get('problem_type', 'unknown')
-        importance_score = data.get('importance_score')
-        
-        if not target_variable or not table_name:
-            return jsonify({'error': 'target_variable and table_name are required'}), 400
-        
-        print(f"\n🎯 Saving target variable selection for workflow {workflow_id}")
-        print(f"   Target: {target_variable}")
-        print(f"   Table: {table_name}")
-        print(f"   Type: {problem_type}")
-        
-        schema_name = f"WORKFLOW_{workflow_id}"
-        
-        # Initialize workflow manager
-        manager = WorkflowManager()
-        uploader = manager.get_workflow_uploader(schema_name=schema_name)
-        
-        # Update the workflow_eda_summary table with the selected target
-        # This table already exists and has a target_column field
-        update_query = f"""
-            UPDATE {schema_name}.workflow_eda_summary
-            SET 
-                target_column = '{target_variable}',
-                analysis_type = '{problem_type}'
-            WHERE table_name = '{table_name}'
-        """
-        
-        uploader.cursor.execute(update_query)
-        rows_updated = uploader.cursor.rowcount
-        uploader.conn.commit()
-        
-        if rows_updated > 0:
-            print(f"  ✓ Updated workflow_eda_summary with target variable")
-        else:
-            print(f"  ⚠️  No EDA summary found for table {table_name}")
-        
-        # Also save to workflow metadata for easy retrieval
-        metadata_insert = f"""
-            MERGE INTO {schema_name}.workflow_metadata AS target
-            USING (
-                SELECT 
-                    'target_variable' as key,
-                    PARSE_JSON('{{"variable": "{target_variable}", "table": "{table_name}", "type": "{problem_type}", "score": {importance_score or "null"}}}') as value,
-                    CURRENT_TIMESTAMP() as updated_at
-            ) AS source
-            ON target.key = source.key
-            WHEN MATCHED THEN
-                UPDATE SET value = source.value, updated_at = source.updated_at
-            WHEN NOT MATCHED THEN
-                INSERT (key, value, updated_at) VALUES (source.key, source.value, source.updated_at)
-        """
-        uploader.cursor.execute(metadata_insert)
-        uploader.conn.commit()
-        
-        print(f"  ✓ Target variable saved to workflow metadata")
-        
-        uploader.close()
-        manager.close()
-        
-        return jsonify({
-            'success': True,
-            'message': 'Target variable saved successfully',
-            'workflow_id': workflow_id,
-            'target_variable': target_variable,
-            'table_name': table_name,
-            'problem_type': problem_type,
-            'importance_score': importance_score,
-            'next_step': 'model_training'
-        }), 200
-        
-    except Exception as e:
-        print(f"❌ Error saving target variable: {str(e)}")
+        print(f"❌ Error: {str(e)}")
         traceback.print_exc()
         return jsonify({
             'error': str(e),
