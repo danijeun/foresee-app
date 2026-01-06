@@ -1,8 +1,8 @@
-# Foresee - AI-Powered AutoML Platform
+# ForeSight - AI-Powered AutoML Platform
 
 **Automated Machine Learning Analysis & Reporting with Google Gemini AI**
 
-Foresee is an intelligent web application that transforms raw data into actionable ML insights. Upload a CSV file and get professional ML analysis reports with AI-powered target variable recommendations, automated model training, and comprehensive PDF reports—all in minutes.
+ForeSight is an intelligent web application that transforms raw data into actionable ML insights. Upload a CSV file and get professional ML analysis reports with AI-powered target variable recommendations, automated model training, and comprehensive PDF reports—all in minutes.
 
 ---
 
