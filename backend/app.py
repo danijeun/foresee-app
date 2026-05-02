@@ -1931,18 +1931,21 @@ def view_pdf(workflow_id, filename):
 
 
 if __name__ == '__main__':
+    port = int(os.getenv("PORT", "5000"))
+    debug = os.getenv("FLASK_DEBUG", "true").lower() == "true"
+
     print("=" * 70)
     print("🚀 Foresee API Server Starting")
     print("=" * 70)
-    print("📍 API will be available at: http://localhost:5000")
-    print("📍 Frontend should connect to: http://localhost:5000/api/")
+    print(f"📍 API will be available at: http://localhost:{port}")
+    print(f"📍 Frontend should connect to: http://localhost:{port}/api/")
     print("=" * 70)
     
     # Disable reloader to prevent OSError with parallel threads on Windows
     # The reloader causes socket errors when multiple threads are running
     app.run(
         host='0.0.0.0',
-        port=5000,
-        debug=True,
+        port=port,
+        debug=debug,
         use_reloader=False  # Prevents Windows socket errors with ThreadPoolExecutor
     )

@@ -8,6 +8,7 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
+    "start:railway": "vite preview --host 0.0.0.0 --port ${PORT:-4173}",
     "dev:all": "concurrently \"npm run dev\" \"npm run backend\"",
     "backend": "cd ../backend && python app.py"
   },

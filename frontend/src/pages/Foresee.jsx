@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 
-const API_BASE_URL = "http://localhost:5000/api";
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api";
 
 function Foresee() {
   const [file, setFile] = useState(null);
@@ -351,7 +352,7 @@ const handleSelectTarget = async (suggestion) => {
       }
     } catch (err) {
       setError(
-        `Connection error: ${err.message}. Make sure the backend is running on port 5000.`
+        `Connection error: ${err.message}. Check that the backend URL is reachable.`
       );
       setStage("upload");
       setFile(null);
